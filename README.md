@@ -238,7 +238,12 @@ This tab is used to create projects, load saved samples, delete samples or proje
 
 This tab plots manual Q, A, P, and F values on a Streckeisen-style QAPF diagram. It supports plutonic and volcanic diagram modes and can export the diagram as an image.
 
-Some helper functions used in the QAPF tab were adapted from GCDkit. Please cite Janousek, Farrow and Erban (2006) when this part of the application is used in published work.
+The QAPF field-coordinate tables were adapted from the QAPF implementation in
+GCDkit. The surrounding Shiny interface, data preparation, point-in-polygon
+classification, plotting workflow, and export logic are implemented in this
+project. GCDkit is distributed under `GPL (>= 2)`. Please cite Janousek, Farrow
+and Erban (2006) when the QAPF functionality is used in published work. See
+`THIRD_PARTY_NOTICES.md` for details.
 
 ### Mineral Reference
 
@@ -300,15 +305,9 @@ This project has been developed and tested primarily in one petrographic workflo
 - map export settings;
 - package installation for `sf`, `magick`, `webshot2`, and `EBImage`.
 
-For public release, consider adding:
-
-- a license file;
-- a citation file (`CITATION.cff`);
-- example screenshots;
-- screenshots based on the included demo database;
-- a short example DOCX export;
-- a short example GIS export;
-- a launcher script for non-demo local work.
+Possible additions for future releases include a citation file
+(`CITATION.cff`), example screenshots, example DOCX and GIS exports, and a
+launcher script for non-demo local work.
 
 ## Current Limitations
 
@@ -322,8 +321,29 @@ For public release, consider adding:
 
 Abramov, S. (2025-2026). Make_Thin_Section: a Shiny application for petrographic thin-section description, image management, DOCX reporting, and project GIS export.
 
+## License
+
+Copyright (C) 2025-2026 Sergei Abramov.
+
+Make_Thin_Section is free software licensed under the GNU General Public
+License, version 3 or (at your option) any later version
+(`GPL-3.0-or-later`). See `LICENSE` for the complete license text.
+
+This license permits use, study, modification, and redistribution, including
+commercial use, subject to the terms of the GNU GPL. Distributed modified
+versions must remain under a GPL-compatible license and must make the
+corresponding source code available as required by the license.
+
+Third-party acknowledgements and licensing information are provided in
+`THIRD_PARTY_NOTICES.md`.
+
 ## Acknowledgements And External Code
 
-The QAPF tab uses some helper functions adapted from GCDkit:
+The numerical field-coordinate tables used by the QAPF tab were adapted from
+the plutonic and volcanic QAPF implementations in GCDkit, which is distributed
+under `GPL (>= 2)`. The GCDkit project is available at
+[www.gcdkit.org](https://www.gcdkit.org/).
 
 Janousek, V.; Farrow, C. M.; Erban, V. (2006). Interpretation of whole-rock geochemical data in igneous geochemistry: introducing Geochemical Data Toolkit (GCDkit). Journal of Petrology 47(6): 1255-1259. doi: 10.1093/petrology/egl013.
+
+For the full notice, see `THIRD_PARTY_NOTICES.md`.
