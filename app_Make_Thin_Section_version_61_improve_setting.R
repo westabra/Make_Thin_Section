@@ -1458,6 +1458,7 @@ tags$hr(),
                 "Advanced basemap export requires htmlwidgets and webshot2, a working browser rendering backend, ",
                 "and a reliable internet connection while map tiles are loading."
               ),
+              uiOutput("advanced_map_dependency_status"),
               selectInput(
                 "advanced_map_provider",
                 "Basemap provider",
@@ -3643,18 +3644,69 @@ output$db_info <- renderText({
     m
   }
 
+  advanced_map_dependency_check <- function(type = c("png", "pdf", "both")) {
+    type <- match.arg(type)
+    required <- c("htmlwidgets", "webshot2")
+    if (type %in% c("pdf", "both")) required <- c(required, "magick")
+    missing <- required[
+      !vapply(required, requireNamespace, logical(1), quietly = TRUE)
+    ]
+
+    list(
+      ok = length(missing) == 0,
+      missing = missing
+    )
+  }
+
+  advanced_map_dependency_message <- function(check) {
+    if (isTRUE(check$ok)) return("")
+    paste0(
+      "Advanced basemap export is unavailable. Missing R package",
+      if (length(check$missing) == 1) ": " else "s: ",
+      paste(check$missing, collapse = ", "),
+      ". Run source(\"install_main_dependencies.R\") in R/RStudio, ",
+      "then restart the application."
+    )
+  }
+
+  output$advanced_map_dependency_status <- renderUI({
+    check <- advanced_map_dependency_check("both")
+    if (isTRUE(check$ok)) return(NULL)
+
+    tags$div(
+      style = paste(
+        "background:#f8d7da; border:1px solid #f5c2c7;",
+        "color:#842029; padding:10px; border-radius:6px;",
+        "margin:8px 0 12px 0;"
+      ),
+      tags$b("Advanced export is not ready."),
+      tags$br(),
+      paste0(
+        "Missing R package",
+        if (length(check$missing) == 1) ": " else "s: ",
+        paste(check$missing, collapse = ", "),
+        "."
+      ),
+      tags$br(),
+      "Run once in R/RStudio: ",
+      tags$code('source("install_main_dependencies.R")'),
+      tags$br(),
+      "Then restart Make Thin Section and try the export again."
+    )
+  })
+
   export_project_advanced_map <- function(df, file, type = c("png", "pdf")) {
     type <- match.arg(type)
 
-    if (!requireNamespace("htmlwidgets", quietly = TRUE)) {
-      stop("Advanced basemap export requires the R package 'htmlwidgets'. Install it with install.packages('htmlwidgets').")
-    }
-    if (!requireNamespace("webshot2", quietly = TRUE)) {
-      stop(paste(
-        "Advanced basemap export requires the R package 'webshot2' to render Leaflet maps to PNG/PDF.",
-        "Install it with install.packages('webshot2'), then restart R/RStudio and try again.",
-        "If R asks whether to update old packages, you can safely answer 'n' for this app."
-      ))
+    dependency_check <- advanced_map_dependency_check(type)
+    if (!isTRUE(dependency_check$ok)) {
+      dependency_message <- advanced_map_dependency_message(dependency_check)
+      showNotification(
+        dependency_message,
+        type = "error",
+        duration = NULL
+      )
+      stop(dependency_message)
     }
 
     map_mode <- input$project_map_mode %||% "main_only"
