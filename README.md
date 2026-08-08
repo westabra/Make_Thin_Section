@@ -6,7 +6,8 @@ The application provides a practical interface for building and using a petrogra
 
 Author: Sergei Abramov  
 Contact: westabra@gmail.com  
-Current public app file: `app_Make_Thin_Section_version_62_mineral_reference_web_search.R`
+Current public app file: `app_Make_Thin_Section_version_62_mineral_reference_web_search.R`  
+Version 62 DOI: [10.13140/RG.2.2.18311.97448](https://doi.org/10.13140/RG.2.2.18311.97448)
 
 ## Why Use Make_Thin_Section?
 
@@ -386,7 +387,7 @@ launcher script for non-demo local work.
 
 ## Suggested Citation
 
-Abramov, S. (2025-2026). Make_Thin_Section: a Shiny application for petrographic thin-section description, image management, DOCX reporting, and project GIS export.
+Abramov, S. (2026). *Make_Thin_Section v62: a Shiny application for petrographic thin-section description, image management, DOCX reporting, and project GIS export*. ResearchGate. [https://doi.org/10.13140/RG.2.2.18311.97448](https://doi.org/10.13140/RG.2.2.18311.97448)
 
 ## License
 
