@@ -31,7 +31,8 @@ core_packages <- c(
   "stringr",
   "readr",
   "openxlsx",
-  "tibble"
+  "tibble",
+  "markdown"
 )
 
 advanced_export_packages <- c(

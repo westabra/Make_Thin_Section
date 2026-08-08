@@ -59,7 +59,7 @@ It is not an automatic mineral-identification system. Mineral names, textures, i
 12. Generate a DOCX petrographic report.
 13. Use the Project map / Google Earth tab to review sample locations and export GIS layers or static maps.
 
-The left panel is the central sample form. The tabs on the right provide supporting work areas: mineral table, database loading tools, QAPF, reference lookup, map/GIS export, settings, and image management.
+The left panel is the central sample form. The tabs on the right provide supporting work areas: mineral table, database loading tools, QAPF, reference lookup, map/GIS export, settings, the built-in user guide, and image management.
 
 ## Repository Files
 
@@ -98,7 +98,7 @@ application packages:
 
 ```text
 shiny, DT, officer, flextable, magick, base64enc,
-sf, leaflet, DBI, RSQLite, dplyr, stringr, readr, openxlsx, tibble
+sf, leaflet, DBI, RSQLite, dplyr, stringr, readr, openxlsx, tibble, markdown
 ```
 
 It also installs packages used by advanced map and Shapefile export:
@@ -327,6 +327,10 @@ GIS layer export uses the selected Main Project. Overlay and all-project modes a
 ### Settings
 
 This tab stores defaults in SQLite, including default author, default project, DOCX field font size, image display size, and image-compression limits. It also reloads CSV libraries and mapping classifiers.
+
+### Help / User Guide
+
+This tab displays `README.md` directly inside the Shiny application as a readable user guide. The `markdown` package provides formatted headings, lists, links, and code examples. If that package is unavailable, the app remains usable and displays the guide as plain text.
 
 ### Image Container
 

@@ -1625,7 +1625,34 @@ load_mapping_units <- function(con, classifier_name = NULL) {
   df
 }
 
+build_user_guide_ui <- function(path = file.path(getwd(), "README.md")) {
+  if (!file.exists(path)) {
+    return(tags$div(
+      class = "alert alert-warning",
+      "README.md was not found in the application folder."
+    ))
+  }
 
+  guide_text <- paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+
+  if (requireNamespace("markdown", quietly = TRUE)) {
+    guide_html <- markdown::markdownToHTML(
+      text = guide_text,
+      fragment.only = TRUE,
+      encoding = "UTF-8"
+    )
+    return(tags$div(class = "user-guide-content", HTML(guide_html)))
+  }
+
+  tags$div(
+    class = "user-guide-content",
+    tags$div(
+      class = "alert alert-info",
+      "The markdown package is not installed, so the guide is shown as plain text. Run install_main_dependencies.R for formatted display."
+    ),
+    tags$pre(guide_text)
+  )
+}
 
 ui <- fluidPage(
   tags$head(
@@ -1637,6 +1664,17 @@ ui <- fluidPage(
         padding: 10px;
       }
       .small-note { color: #666; font-size: 0.9em; }
+      .user-guide-content {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 8px 18px 30px 18px;
+        line-height: 1.55;
+      }
+      .user-guide-content h1,
+      .user-guide-content h2,
+      .user-guide-content h3 { color: #244b63; }
+      .user-guide-content img { max-width: 100%; height: auto; }
+      .user-guide-content pre { white-space: pre-wrap; word-break: normal; }
       .field-label { font-weight: 600; margin-top: 10px; }
       .map-style-block {
         margin: 12px 0 12px 0;
@@ -2590,6 +2628,22 @@ tabPanel(
   tags$br(),
   verbatimTextOutput("db_info")
 ),
+        tabPanel(
+          "Help / User Guide",
+          tags$div(
+            style = "display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:8px;",
+            tags$div(
+              h4(style = "margin-bottom:4px;", "Make_Thin_Section User Guide"),
+              tags$p(
+                class = "small-note",
+                style = "margin-bottom:0;",
+                "This page displays README.md from the application folder as an in-app user guide."
+              )
+            )
+          ),
+          tags$hr(),
+          build_user_guide_ui()
+        ),
         tabPanel(
           "Image container (sorted)",
           tags$div(

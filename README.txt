@@ -1,6 +1,7 @@
 Make_Thin_Section
 
 The main project documentation is now in README.md.
+It can also be read inside the application on the Help / User Guide tab.
 
 Start there for:
 - project overview;
