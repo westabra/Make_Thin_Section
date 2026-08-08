@@ -26,7 +26,12 @@ core_packages <- c(
   "sf",
   "leaflet",
   "DBI",
-  "RSQLite"
+  "RSQLite",
+  "dplyr",
+  "stringr",
+  "readr",
+  "openxlsx",
+  "tibble"
 )
 
 advanced_export_packages <- c(

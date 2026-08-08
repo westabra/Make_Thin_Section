@@ -21,4 +21,4 @@ if (!file.exists(demo_db)) {
 
 Sys.setenv(PETRO_DB_PATH = demo_db)
 setwd(app_dir)
-shiny::runApp("app_Make_Thin_Section_version_61_improve_setting.R")
+shiny::runApp("app_Make_Thin_Section_version_62_mineral_reference_web_search.R")

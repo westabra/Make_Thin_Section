@@ -6,7 +6,7 @@ The application provides a practical interface for building and using a petrogra
 
 Author: Sergei Abramov  
 Contact: westabra@gmail.com  
-Current public app file: `app_Make_Thin_Section_version_61_improve_setting.R`
+Current public app file: `app_Make_Thin_Section_version_62_mineral_reference_web_search.R`
 
 ## Why Use Make_Thin_Section?
 
@@ -24,8 +24,9 @@ The goal is simple: keep the petrographic description, mineral table, texture in
 - Stores samples by project and sample ID in a local SQLite database.
 - Provides a user-friendly interface for building a reusable petrographic-description database.
 - Keeps mineral composition as editable table rows.
-- Expands common mineral abbreviations from `minerals.csv`.
-- Uses `biblio_for_mineral_descriptions.csv` as a reference library for mineral morphology and genesis text suggestions.
+- Uses `minerals.csv` as the selectable list of mineral names and petrographic reference terms.
+- Provides an independent local lookup that matches the selected name from `minerals.csv` against descriptions in `biblio_for_mineral_descriptions.csv`.
+- Uses the Whitney and Evans abbreviation list when preparing mineral names for the project petrographic-summary workbook.
 - Stores, orders, captions, compresses, and reuses sample images.
 - Exports petrographic descriptions to DOCX using `petro_template.docx`.
 - Provides a QAPF diagram tool for manual modal values.
@@ -33,6 +34,7 @@ The goal is simple: keep the petrographic description, mineral table, texture in
 - Displays project samples on a Leaflet map.
 - Exports project point layers as KML, Shapefile ZIP, or GeoPackage.
 - Exports clean static project maps as PNG or PDF.
+- Exports a project petrographic-summary workbook from Database tools.
 - Includes a separate Image Fragmentator tool for petrographic image segmentation experiments.
 
 ## Intended Users
@@ -44,8 +46,8 @@ It is not an automatic mineral-identification system. Mineral names, textures, i
 ## Main Workflow
 
 1. Start the app.
-2. Select or create a project in the left panel.
-3. Enter the sample ID and basic field metadata.
+2. Create a project in Database tools, or select an existing project in the left panel.
+3. Enter the sample ID and basic field metadata. You can also start from Database tools with `Add New Sample Description`; this clears the sample-specific fields, keeps Project and Author, opens the description form, and focuses the Sample ID field.
 4. Add coordinates manually, or use the coordinate calculator for PSAD56 / UTM to WGS84 conversion.
 5. Enter the microscope rock name, grain size, and primary texture.
 6. Add mineral-composition rows in the Rock description tab.
@@ -63,7 +65,8 @@ The left panel is the central sample form. The tabs on the right provide support
 
 Keep these files in the same folder unless you also update paths in the R code:
 
-- `app_Make_Thin_Section_version_61_improve_setting.R` - main public Shiny application.
+- `app_Make_Thin_Section_version_62_mineral_reference_web_search.R` - main public Shiny application.
+- `mineral_reference_web_resources.csv` - editable curated catalogue used by the Mineral Reference resource hub.
 - `run_demo.R` - demo launcher. This is the file most new users should run first.
 - `install_main_dependencies.R` - installs missing packages required by the main application and its export tools.
 - `install_fragmentator_dependencies.R` - installs missing packages required by Image Fragmentator, including `EBImage`.
@@ -72,13 +75,14 @@ Keep these files in the same folder unless you also update paths in the R code:
 - `images/` - image library folder used by the demo database and by local SQLite databases stored in this app folder.
 - `image_fragmentator_V6.R` - standalone image-segmentation helper app.
 - `petro_template.docx` - Word template used for DOCX export.
-- `minerals.csv` - mineral names and abbreviation mapping.
-- `biblio_for_mineral_descriptions.csv` - reference phrases for mineral descriptions.
+- `minerals.csv` - selectable mineral names and petrographic reference terms used by the composition editor and local Mineral Reference lookup. The distributed file contains names only.
+- `biblio_for_mineral_descriptions.csv` - sourced reference descriptions classified as `general`, `general PPL`, or `general XPL`. It may also contain clearly identified microtextures and alteration mixtures that are not independent mineral species.
 - `grainsizes.csv` - grain-size vocabulary.
 - `textures.csv` - texture vocabulary and interpretation support.
 - `lookup_rocktype.csv` - lithology / mapping-unit classifier source.
-- `rock_name_list.csv` - optional supporting rock-name vocabulary; version 61 does not load it automatically.
-- `White et. al. Abbreviations for names of rock-forming minerals.csv` - optional supporting abbreviation reference; version 61 does not load it automatically.
+- `rock_name_list.csv` - optional supporting rock-name vocabulary; version 62 does not load it automatically.
+- `White et. al. Abbreviations for names of rock-forming minerals.csv` - abbreviation source required by the petrographic-summary exporter and reproduced on its `mineral_abbreviations` sheet.
+- `export_petrographic_summary_from_SQLite_v2_3.R` - standalone/reference copy of the project-summary exporter. Version 62 contains the operational exporter in the main application file and does not source this external script at runtime.
 
 ## Requirements
 
@@ -94,7 +98,7 @@ application packages:
 
 ```text
 shiny, DT, officer, flextable, magick, base64enc,
-sf, leaflet, DBI, RSQLite
+sf, leaflet, DBI, RSQLite, dplyr, stringr, readr, openxlsx, tibble
 ```
 
 It also installs packages used by advanced map and Shapefile export:
@@ -124,7 +128,7 @@ On Windows, the `sf` and `magick` packages may require system libraries dependin
 Open R or RStudio in the application folder and run:
 
 ```r
-shiny::runApp("app_Make_Thin_Section_version_61_improve_setting.R")
+shiny::runApp("app_Make_Thin_Section_version_62_mineral_reference_web_search.R")
 ```
 
 Run this command from the application folder. The distribution does not
@@ -178,7 +182,7 @@ or:
 
 ```r
 Sys.setenv(PETRO_DB_PATH = file.path(getwd(), "Make_Thin_Section_demo.sqlite"))
-shiny::runApp("app_Make_Thin_Section_version_61_improve_setting.R")
+shiny::runApp("app_Make_Thin_Section_version_62_mineral_reference_web_search.R")
 ```
 
 ## Data Storage
@@ -189,12 +193,17 @@ By default, the application stores data in:
 C:/GCDkit.data/petro_db/petro_v3.sqlite
 ```
 
-Images and exports are stored beside that database:
+The application-managed image library and working export directory are located beside that database:
 
 ```text
 C:/GCDkit.data/petro_db/images/
 C:/GCDkit.data/petro_db/exports/
 ```
+
+Browser downloads are not automatically written into these folders. DOCX reports,
+project petrographic-summary XLSX workbooks, and other download-handler results are
+delivered through the browser, which controls the final save location. In particular,
+the petrographic-summary exporter does not need write access to the SQLite directory.
 
 On first use, the app creates the SQLite database schema and the required folders if they do not already exist.
 
@@ -202,7 +211,7 @@ To use another database location without editing the app code, set the `PETRO_DB
 
 ```r
 Sys.setenv(PETRO_DB_PATH = "C:/path/to/your/petro_demo.sqlite")
-shiny::runApp("app_Make_Thin_Section_version_61_improve_setting.R")
+shiny::runApp("app_Make_Thin_Section_version_62_mineral_reference_web_search.R")
 ```
 
 If `PETRO_DB_PATH` is not set, the app uses the default path shown above.
@@ -215,10 +224,10 @@ The app supports a read-only LAN mode through the environment variable `SHINY_RE
 
 ```r
 Sys.setenv(SHINY_READ_ONLY = "TRUE")
-shiny::runApp("app_Make_Thin_Section_version_61_improve_setting.R")
+shiny::runApp("app_Make_Thin_Section_version_62_mineral_reference_web_search.R")
 ```
 
-In read-only mode, the app opens the existing SQLite database without allowing write operations such as saving samples, creating projects, deleting records, or importing classifier rows.
+In read-only mode, the app opens the existing SQLite database without allowing write operations such as saving samples, creating projects, deleting records, or importing classifier rows. Project petrographic-summary reports remain available: the database is opened with a physical SQLite read-only connection and the generated workbook is delivered through the browser without writing beside the database.
 
 ## Main Interface Areas
 
@@ -232,7 +241,50 @@ This tab contains the mineral-composition editor, the microscopic description fi
 
 ### Database Tools
 
-This tab is used to create projects, load saved samples, delete samples or projects, optimize the stored image library, and repair image paths if files have moved.
+This tab is used to create projects, load saved samples, delete samples or projects, start a new sample description, generate a Word report for the displayed sample, and export project-level petrographic summaries.
+
+#### Add New Sample Description
+
+Click the blue `Add New Sample Description` button to open a blank sample form.
+The action clears sample-specific fields but keeps the current Project and Author,
+opens the Rock description tab, and places the cursor in `Sample ID`. Enter the new
+sample number, complete the description, and click `Save sample to SQLite` in the
+left panel when the record is ready. Opening the form alone does not create a row in
+SQLite.
+
+#### Petrographic Summary XLSX
+
+Select a project in `Project (from DB)` and click `Export petrographic summary (XLSX)`. A progress window reports the current stage while the database is opened, tables are read, mineral records are classified, and the workbook is assembled. When generation finishes, the browser handles the save location. The application does not write the report into the application folder or beside the SQLite database.
+
+The suggested filename includes the project name:
+
+```text
+Project_Name_petrographic_summary_v2_3.xlsx
+```
+
+The workbook contains three sheets in this order:
+
+1. `summary` — sample ID, coordinates, rock name, suggested lithological unit, grouped mineralogy, alteration, veins, weathering, and calculated Q, A, P, and AI values.
+2. `unclassified_records` — detailed mineral-composition records whose `Genesis` value is empty or does not match the Primary, Alteration, Veins, or Weathering classification rules.
+3. `mineral_abbreviations` — the complete source list from `White et. al. Abbreviations for names of rock-forming minerals.csv`.
+
+Mineral abbreviations affect display names only. If a mineral or material is not present in the White et al. list, its full name is retained in title case. Assignment to a mineralogy group is controlled by the `Genesis` field, not by the presence of an abbreviation. Unclassified material is also included in `Primary mineralogy` with the note `[Genesis unclassified; see unclassified_records]`, while its full source record remains on the `unclassified_records` sheet.
+
+Below the table on the `summary` sheet, the workbook explains how entries marked
+`[Genesis unclassified; see unclassified_records]` are handled and directs the user
+to the `unclassified_records` sheet for full details. A second footnote identifies
+the source of the mineral abbreviations:
+
+Whitney, D. L., & Evans, B. W. (2010). *Abbreviations for names of rock-forming
+minerals*. *American Mineralogist*, *95*(1), 185-187.
+
+The summary exporter used by version 62 is embedded in
+`app_Make_Thin_Section_version_62_mineral_reference_web_search.R`. The external
+`export_petrographic_summary_from_SQLite_v2_3.R` file is not required at runtime.
+
+#### Single Sample Word Report
+
+After selecting a project and sample, click `Load from SQLite`, then use `Generate DOCX` under `Single Sample Report → Word document`. This creates the same Word report as the `Generate DOCX` button in the main sample panel; both buttons export the sample currently displayed in the panel.
 
 ### QAPF
 
@@ -247,7 +299,18 @@ and Erban (2006) when the QAPF functionality is used in published work. See
 
 ### Mineral Reference
 
-This tab searches the mineral-description reference library and inserts selected morphology/genesis text into the mineral table editor.
+The local `Lookup Mineral` list is loaded from `minerals.csv`. Selecting an item
+searches for matching records in `biblio_for_mineral_descriptions.csv` and displays
+the available `general`, `general PPL`, and `general XPL` descriptions together with
+their sources. Supported synonym pairs can resolve to the same bibliography records.
+
+Mineral Reference is intentionally independent from the Mineral field in the Rock
+description tab. It does not overwrite, append to, or otherwise modify the sample
+description; users can copy and paste any useful text manually.
+
+The same tab also provides an online research area that builds links to external
+mineralogical and bibliographic resources. Opening those links does not modify the
+local CSV library or the SQLite database.
 
 ### Project Map / Google Earth
 

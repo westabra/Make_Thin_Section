@@ -13,7 +13,7 @@ Start there for:
 - publication notes for GitHub or ResearchGate.
 
 Main app file:
-app_Make_Thin_Section_version_61_improve_setting.R
+app_Make_Thin_Section_version_62_mineral_reference_web_search.R
 
 Before the first launch, install the main application dependencies:
 source("install_main_dependencies.R")
