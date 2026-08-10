@@ -3,7 +3,7 @@
 # ------------------------------------------------------------
 # Standalone / bridge Shiny app for petrographic image segmentation.
 #
-# Version: V5.2 standalone — caption preview
+# Version: V6 — manual segmentation workflow
 #
 # Main methods:
 #   1. Grayscale threshold segmentation
@@ -65,7 +65,7 @@ library(EBImage)
 # ============================================================
 
 APP_NAME <- "Image Fragmentator"
-APP_VERSION <- "V5.2 standalone — caption preview"
+APP_VERSION <- "V6 — manual segmentation workflow"
 
 MAX_UPLOAD_MB <- 80
 MAX_WORKING_DIM <- 2000
@@ -247,14 +247,24 @@ rgb_array_to_raster <- function(arr) {
 }
 
 plot_rgb_array <- function(arr, title = NULL) {
+  h <- dim(arr)[1]
+  w <- dim(arr)[2]
+
   par(mar = c(1, 1, ifelse(is.null(title), 1, 3), 1))
   plot.new()
+  plot.window(
+    xlim = c(0, w),
+    ylim = c(0, h),
+    asp = 1,
+    xaxs = "i",
+    yaxs = "i"
+  )
   rasterImage(
     as.raster(rgb_array_to_raster(arr)),
     xleft = 0,
     ybottom = 0,
-    xright = 1,
-    ytop = 1,
+    xright = w,
+    ytop = h,
     interpolate = FALSE
   )
   if (!is.null(title)) title(main = title)
@@ -786,6 +796,65 @@ ui <- fluidPage(
       .small-note {
         font-size: 12px;
         color: #666666;
+        line-height: 1.3;
+        display: block;
+      }
+      .compact-sidebar .control-section {
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid #d9d9d9;
+        border-radius: 6px;
+        padding: 8px 10px;
+        margin-bottom: 8px;
+      }
+      .compact-sidebar .section-title {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0 0 7px 0;
+      }
+      .compact-sidebar .form-group {
+        margin-bottom: 7px;
+      }
+      .compact-sidebar .control-label {
+        margin-bottom: 3px;
+        font-size: 12px;
+      }
+      .compact-sidebar .checkbox {
+        margin-top: 4px;
+        margin-bottom: 4px;
+      }
+      .compact-sidebar .row {
+        margin-left: -5px;
+        margin-right: -5px;
+      }
+      .compact-sidebar .row > div {
+        padding-left: 5px;
+        padding-right: 5px;
+      }
+      .compact-sidebar #run_segmentation,
+      .compact-sidebar #save_to_output_folder,
+      .compact-sidebar .shiny-download-link {
+        width: 100%;
+      }
+      .compact-sidebar .shiny-download-link {
+        display: block;
+        margin-top: 5px;
+        white-space: normal;
+      }
+      .compact-sidebar .run-note {
+        margin-top: 6px;
+      }
+      .compact-sidebar .status-details {
+        margin-top: 2px;
+      }
+      .compact-sidebar .status-details summary {
+        cursor: pointer;
+        font-weight: 600;
+        padding: 6px 2px;
+      }
+      .compact-sidebar .status-details pre {
+        margin-top: 5px;
+        font-size: 11px;
+        white-space: pre-wrap;
       }
       .warning-box {
         background: #fff3cd;
@@ -850,141 +919,154 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       width = 3,
+      div(
+        class = "compact-sidebar",
 
-      h4("Input image"),
-
-      fileInput(
-        "upload_image",
-        "Upload image",
-        accept = c(".jpg", ".jpeg", ".png", ".tif", ".tiff")
-      ),
-
-      tags$hr(),
-
-      h4("ROI selection"),
-
-      checkboxInput("use_roi", "Use brushed ROI", value = FALSE),
-      actionButton("use_brush_roi", "Use brushed ROI from image"),
-      actionButton("clear_roi", "Clear ROI"),
-      br(),
-      tags$span(class = "small-note", "Brush a rectangle on the input image preview, then click 'Use brushed ROI from image'."),
-
-      tags$hr(),
-
-      h4("Segmentation method"),
-
-      radioButtons(
-        "method",
-        "Method",
-        choices = c(
-          "Grayscale threshold" = "threshold",
-          "K-means RGB clustering" = "kmeans",
-          "Marker-controlled watershed (experimental)" = "watershed"
+        div(
+          class = "control-section",
+          h4(class = "section-title", "1. Image and ROI"),
+          fileInput(
+            "upload_image",
+            "Upload image",
+            accept = c(".jpg", ".jpeg", ".png", ".tif", ".tiff")
+          ),
+          actionButton(
+            "clear_roi",
+            "Clear ROI / use full image",
+            icon = icon("eraser"),
+            class = "btn btn-default btn-sm"
+          ),
+          tags$span(
+            class = "small-note",
+            "Draw a rectangle on Original Image; it becomes active immediately."
+          )
         ),
-        selected = "threshold"
-      ),
 
-      conditionalPanel(
-        condition = "input.method == 'threshold'",
-        sliderInput(
-          "threshold",
-          "Threshold",
-          min = 0,
-          max = 1,
-          value = 0.5,
-          step = 0.01
-        ),
-        checkboxInput("threshold_invert", "Invert mask", value = FALSE)
-      ),
+        div(
+          class = "control-section",
+          h4(class = "section-title", "2. Method and parameters"),
+          selectInput(
+            "method",
+            "Segmentation method",
+            choices = c(
+              "Grayscale threshold" = "threshold",
+              "K-means RGB clustering" = "kmeans",
+              "Watershed (experimental)" = "watershed"
+            ),
+            selected = "threshold",
+            width = "100%"
+          ),
 
-      conditionalPanel(
-        condition = "input.method == 'kmeans'",
-        numericInput(
-          "k_centers",
-          "Number of clusters, k",
-          value = 4,
-          min = 2,
-          max = 20,
-          step = 1
-        ),
-        numericInput(
-          "k_nstart",
-          "k-means nstart",
-          value = 25,
-          min = 1,
-          max = 200,
-          step = 1
-        ),
-        numericInput(
-          "k_seed",
-          "Random seed",
-          value = 123,
-          min = 1,
-          max = 999999,
-          step = 1
-        ),
-        tags$span(class = "small-note", "nstart controls repeated random starts; seed makes the result reproducible.")
-      ),
+          conditionalPanel(
+            condition = "input.method == 'threshold'",
+            sliderInput(
+              "threshold", "Threshold",
+              min = 0, max = 1, value = 0.5, step = 0.01
+            ),
+            checkboxInput("threshold_invert", "Invert mask", value = FALSE)
+          ),
 
-      conditionalPanel(
-        condition = "input.method == 'watershed'",
-        sliderInput(
-          "ws_threshold",
-          "Mask threshold",
-          min = 0,
-          max = 1,
-          value = 0.5,
-          step = 0.01
+          conditionalPanel(
+            condition = "input.method == 'kmeans'",
+            fluidRow(
+              column(
+                6,
+                numericInput(
+                  "k_centers", "Clusters, k",
+                  value = 4, min = 2, max = 20, step = 1,
+                  width = "100%"
+                )
+              ),
+              column(
+                6,
+                numericInput(
+                  "k_nstart", "Random starts",
+                  value = 25, min = 1, max = 200, step = 1,
+                  width = "100%"
+                )
+              )
+            ),
+            numericInput(
+              "k_seed", "Random seed",
+              value = 123, min = 1, max = 999999, step = 1,
+              width = "100%"
+            ),
+            tags$span(
+              class = "small-note",
+              "More starts improve stability; seed makes runs reproducible."
+            )
+          ),
+
+          conditionalPanel(
+            condition = "input.method == 'watershed'",
+            sliderInput(
+              "ws_threshold", "Mask threshold",
+              min = 0, max = 1, value = 0.5, step = 0.01
+            ),
+            checkboxInput("ws_invert_mask", "Invert mask", value = FALSE),
+            fluidRow(
+              column(
+                6,
+                numericInput(
+                  "ws_blur_sigma", "Smoothing",
+                  value = 1.0, min = 0, max = 10, step = 0.5,
+                  width = "100%"
+                )
+              ),
+              column(
+                6,
+                numericInput(
+                  "ws_min_object_px", "Min. object, px",
+                  value = 50, min = 1, max = 100000, step = 10,
+                  width = "100%"
+                )
+              )
+            ),
+            sliderInput(
+              "ws_seed_threshold", "Marker threshold",
+              min = 0.05, max = 0.95, value = 0.35, step = 0.05
+            ),
+            tags$span(
+              class = "small-note",
+              "Higher marker threshold usually produces fewer objects."
+            )
+          )
         ),
-        checkboxInput(
-          "ws_invert_mask",
-          "Invert mask",
-          value = FALSE
+
+        div(
+          class = "control-section",
+          h4(class = "section-title", "3. Process"),
+          actionButton(
+            "run_segmentation",
+            "Run segmentation",
+            icon = icon("play"),
+            class = "btn btn-success"
+          ),
+          tags$span(
+            class = "small-note run-note",
+            "Runs only on click, using the settings above."
+          )
         ),
-        numericInput(
-          "ws_blur_sigma",
-          "Smoothing sigma",
-          value = 1.0,
-          min = 0,
-          max = 10,
-          step = 0.5
+
+        div(
+          class = "control-section",
+          h4(class = "section-title", "4. Export"),
+          actionButton(
+            "save_to_output_folder",
+            "Save PNG + CSV to output folder",
+            icon = icon("save"),
+            class = "btn btn-primary btn-sm"
+          ),
+          downloadButton("download_png", "Download PNG + legend"),
+          downloadButton("download_csv", "Download statistics CSV")
         ),
-        sliderInput(
-          "ws_seed_threshold",
-          "Marker threshold",
-          min = 0.05,
-          max = 0.95,
-          value = 0.35,
-          step = 0.05
-        ),
-        numericInput(
-          "ws_min_object_px",
-          "Minimum object size, pixels",
-          value = 50,
-          min = 1,
-          max = 100000,
-          step = 10
-        ),
-        tags$span(
-          class = "small-note",
-          "Experimental. Higher marker threshold usually gives fewer objects. Higher smoothing reduces noise and over-segmentation."
+
+        tags$details(
+          class = "status-details",
+          tags$summary("Status and image details"),
+          verbatimTextOutput("status_text")
         )
-      ),
-
-      tags$hr(),
-
-      h4("Export"),
-
-      actionButton("save_to_output_folder", "Save PNG + CSV to output folder", class = "btn btn-primary"),
-      br(), br(),
-
-      downloadButton("download_png", "Download segmentation PNG + legend"),
-      downloadButton("download_csv", "Download statistics CSV"),
-
-      tags$hr(),
-
-      h4("Status"),
-      verbatimTextOutput("status_text")
+      )
     ),
 
     mainPanel(
@@ -998,11 +1080,10 @@ ui <- fluidPage(
             class = "info-box",
             strong("ROI selection"),
             br(),
-            "Brush a rectangle directly on the original image, then click ",
-            strong("Use brushed ROI from image"),
-            " in the left panel. The selected ROI will be used for segmentation if ",
-            strong("Use brushed ROI"),
-            " is checked."
+            "Drag a rectangle directly on the original image. The selected area immediately becomes the active ROI. ",
+            "To return to the full image, click ",
+            strong("Clear ROI / use full image"),
+            " in the left panel."
           ),
           plotOutput(
             "plot_original_image",
@@ -1029,6 +1110,12 @@ ui <- fluidPage(
         tabPanel(
           "Segmentation",
           br(),
+          div(
+            class = "info-box",
+            "Results on this tab change only after you click ",
+            strong("Run segmentation"),
+            ". You can adjust the method and parameters without starting a calculation."
+          ),
           fluidRow(
             column(
               width = 6,
@@ -1077,54 +1164,113 @@ ui <- fluidPage(
           br(),
           h3("Image Fragmentator"),
           p(strong("Version:"), APP_VERSION),
-          p(
-            "Fragmentator is a standalone Shiny app for segmentation of petrographic images. ",
-            "It does not depend on Make_Thin_Section and does not write files to the petrographic SQLite database folder."
-          ),
-
-          h4("Operating mode"),
-          tags$ol(
-            tags$li(strong("Standalone mode only:"), " the user uploads an image manually."),
-            tags$li("The program exports a PNG figure with legend and a CSV statistics table."),
-            tags$li("The exported files can be used independently, archived, inserted into reports, or manually imported elsewhere if needed.")
-          ),
-
-          h4("Current workflow"),
-          tags$ol(
-            tags$li("Upload an original unlabelled image."),
-            tags$li("Select ROI if needed."),
-            tags$li("Run threshold, k-means, or experimental watershed segmentation."),
-            tags$li("Export PNG with legend and CSV statistics."),
-            tags$li("Use the exported files outside Fragmentator as needed.")
-          ),
-
-          h4("Important limitation"),
           div(
-            class = "warning-box",
-            "Fragmentator is not a magic-wand mineral identification tool. ",
-            "It does not automatically recognize minerals or produce a final geological interpretation after one click. ",
-            "The program helps separate visible image domains such as textures, structures, veins, alteration zones, matrix, clasts, phenocrysts, or other visually contrasting areas. ",
-            "Geological interpretation remains the responsibility of the user."
+            class = "info-box",
+            strong("Purpose. "),
+            "Image Fragmentator is a standalone Shiny application for exploratory segmentation of petrographic and other scientific images. ",
+            "It separates visually contrasting image domains and provides reproducible statistics for the selected method and settings."
+          ),
+
+          h4("Recommended workflow"),
+          tags$ol(
+            tags$li(strong("Upload an image."), " JPG, PNG and TIFF files are supported."),
+            tags$li(
+              strong("Choose the analysis area."),
+              " Drag a rectangle on the Original Image tab to activate an ROI, or use the full image."
+            ),
+            tags$li(strong("Select a segmentation method."), " Only parameters relevant to that method are shown."),
+            tags$li(strong("Adjust the parameters."), " Changing a control does not start processing."),
+            tags$li(
+              strong("Click Run segmentation."),
+              " The result is calculated only on explicit request."
+            ),
+            tags$li(strong("Review and export."), " Compare the input, segmentation, overlay, legend and statistics before saving."),
+            tags$li(
+              strong("Repeat if required."),
+              " Change the ROI or settings and click Run segmentation again."
+            )
+          ),
+
+          h4("ROI behaviour"),
+          tags$ul(
+            tags$li("The image is displayed at its correct aspect ratio; selecting an ROI does not stretch the source data."),
+            tags$li("A brushed rectangle becomes active immediately and is outlined in red."),
+            tags$li("Clear ROI / use full image removes the selection."),
+            tags$li("ROI preview shows exactly which image area will be used on the next run."),
+            tags$li("The Segmentation tab preserves the input used for the last completed run, even if the current ROI is changed later.")
           ),
 
           h4("Segmentation methods"),
-          tags$ul(
-            tags$li(strong("Grayscale threshold:"), " simple separation by brightness."),
-            tags$li(strong("K-means RGB clustering:"), " separates pixels into color-based clusters."),
-            tags$li(strong("Marker-controlled watershed:"), " experimental method for separating adjacent grains, spots, pores, clasts, or domains. Results may be over-segmented and require careful interpretation.")
+          tags$table(
+            class = "table table-bordered table-condensed",
+            tags$thead(
+              tags$tr(
+                tags$th("Method"),
+                tags$th("What it separates"),
+                tags$th("Main controls")
+              )
+            ),
+            tags$tbody(
+              tags$tr(
+                tags$td(strong("Grayscale threshold")),
+                tags$td("Pixels above or below a selected brightness level."),
+                tags$td("Threshold and mask inversion.")
+              ),
+              tags$tr(
+                tags$td(strong("K-means RGB")),
+                tags$td("Color domains represented by a specified number of clusters."),
+                tags$td("Number of clusters, random starts and reproducible seed.")
+              ),
+              tags$tr(
+                tags$td(strong("Marker-controlled watershed")),
+                tags$td("Adjacent objects or domains within a brightness-derived mask."),
+                tags$td("Mask threshold, smoothing, marker threshold and minimum object size.")
+              )
+            )
+          ),
+          p(
+            class = "small-note",
+            "Watershed is experimental and may over-segment noisy or weakly separated objects."
           ),
 
-          h4("Future development ideas"),
+          h4("Result tabs"),
+          tags$dl(
+            tags$dt("Original Image"),
+            tags$dd("Source image and interactive rectangular ROI selection."),
+            tags$dt("ROI preview"),
+            tags$dd("The full image or active crop prepared for the next run."),
+            tags$dt("Segmentation"),
+            tags$dd("Input from the last run, segmented image, boundary overlay and legend."),
+            tags$dt("Statistics"),
+            tags$dd("Pixel counts, percentages and method-specific class or object information."),
+            tags$dt("Output info"),
+            tags$dd("Output folder, last caption and metadata for the last saved result.")
+          ),
+
+          h4("Export and file handling"),
           tags$ul(
-            tags$li("Copy segmentation image directly to clipboard."),
-            tags$li("Automatic attachment of segmentation result to Image container."),
-            tags$li("Persistent segmentation metadata tables in SQLite."),
-            tags$li("Additional segmentation algorithms."),
-            tags$li("Texture-oriented analysis."),
-            tags$li("Object statistics and size distribution."),
-            tags$li("Morphological filtering."),
-            tags$li("Interactive polygon ROI."),
-            tags$li("Multi-image batch segmentation.")
+            tags$li("Save PNG + CSV writes a presentation figure, statistics table and local RDS metadata to the standalone output folder."),
+            tags$li("Download buttons save the PNG figure or CSV table through the browser."),
+            tags$li("Exports always use the last completed segmentation, not unprocessed parameter changes."),
+            tags$li("The uploaded source image is read only and is never overwritten."),
+            tags$li("Fragmentator does not write to Make_Thin_Section SQLite databases.")
+          ),
+
+          h4("Image size and processing"),
+          p(
+            "Maximum upload size: ", strong(paste0(MAX_UPLOAD_MB, " MB")),
+            ". Images larger than ", strong(paste0(MAX_WORKING_DIM, " pixels")),
+            " on their longest side are proportionally reduced for interactive processing. ",
+            "Original and working dimensions are shown under Status and image details."
+          ),
+
+          h4("Scientific interpretation"),
+          div(
+            class = "warning-box",
+            strong("Important limitation. "),
+            "Fragmentator is not an automatic mineral-identification or geological-interpretation system. ",
+            "Its classes represent mathematical separation by brightness, color or object boundaries—not verified mineral species. ",
+            "Use the overlay, legend and statistics as analytical aids and validate every geological interpretation against the original image and relevant observations."
           )
         )
       )
@@ -1142,6 +1288,10 @@ server <- function(input, output, session) {
   rv <- reactiveValues(
     image_info = NULL,
     roi = NULL,
+    segmentation_input = NULL,
+    segmentation_result = NULL,
+    segmentation_stale = FALSE,
+    last_method = NULL,
     last_saved_result = NULL,
     last_fragmentation_caption = NULL,
     status = "Ready."
@@ -1167,6 +1317,11 @@ server <- function(input, output, session) {
 
     rv$image_info <- info
     rv$roi <- NULL
+    rv$segmentation_input <- NULL
+    rv$segmentation_result <- NULL
+    rv$segmentation_stale <- FALSE
+    rv$last_method <- NULL
+    rv$last_fragmentation_caption <- NULL
 
     rv$status <- paste0(
       "Loaded image from ", source_label, ": ",
@@ -1187,27 +1342,24 @@ server <- function(input, output, session) {
     load_image_from_path(input$upload_image$datapath, source_label = "manual upload")
   })
 
-  observeEvent(input$use_brush_roi, {
+  observeEvent(input$input_brush, {
     req(rv$image_info)
     brush <- input$input_brush
 
-    if (is.null(brush)) {
-      showNotification("No brushed ROI found. Brush a rectangle on the input image first.", type = "warning")
-      return()
-    }
+    if (is.null(brush)) return()
 
     h <- dim(rv$image_info$arr)[1]
     w <- dim(rv$image_info$arr)[2]
 
-    # Plot coordinates are 0..1 in both axes.
-    # Convert brush coordinates to pixel coordinates.
-    xmin <- round(brush$xmin * w)
-    xmax <- round(brush$xmax * w)
+    # The plot uses image-sized coordinates and a fixed 1:1 aspect ratio.
+    # Convert brushed boundaries to inclusive pixel indices.
+    xmin <- floor(min(brush$xmin, brush$xmax)) + 1
+    xmax <- ceiling(max(brush$xmin, brush$xmax))
 
-    # y axis in plot coordinates is 0..1 bottom to top.
+    # Plot y grows bottom-to-top; image row indices grow top-to-bottom.
     # Raster image uses row index top to bottom.
-    ymin <- round((1 - brush$ymax) * h)
-    ymax <- round((1 - brush$ymin) * h)
+    ymin <- floor(h - max(brush$ymin, brush$ymax)) + 1
+    ymax <- ceiling(h - min(brush$ymin, brush$ymax))
 
     rv$roi <- list(
       xmin = max(1, min(xmin, xmax)),
@@ -1216,18 +1368,19 @@ server <- function(input, output, session) {
       ymax = min(h, max(ymin, ymax))
     )
 
-    updateCheckboxInput(session, "use_roi", value = TRUE)
+    rv$segmentation_stale <- !is.null(rv$segmentation_result)
 
     rv$status <- paste0(
       "ROI selected: x=", rv$roi$xmin, "-", rv$roi$xmax,
-      ", y=", rv$roi$ymin, "-", rv$roi$ymax
+      ", y=", rv$roi$ymin, "-", rv$roi$ymax,
+      ". Choose segmentation settings, then click Run segmentation."
     )
   })
 
   observeEvent(input$clear_roi, {
     rv$roi <- NULL
-    updateCheckboxInput(session, "use_roi", value = FALSE)
-    rv$status <- "ROI cleared."
+    rv$segmentation_stale <- !is.null(rv$segmentation_result)
+    rv$status <- "ROI cleared. The full image will be used on the next run."
   })
 
   working_array <- reactive({
@@ -1235,19 +1388,21 @@ server <- function(input, output, session) {
 
     arr <- rv$image_info$arr
 
-    if (isTRUE(input$use_roi) && !is.null(rv$roi)) {
+    if (!is.null(rv$roi)) {
       crop_array_by_roi(arr, rv$roi)$arr
     } else {
       arr
     }
   })
 
-  segmentation_result <- reactive({
-    req(working_array())
+  observeEvent(input$run_segmentation, {
+    req(rv$image_info)
 
     arr <- working_array()
+    method <- input$method
 
-    if (input$method == "threshold") {
+    result <- tryCatch({
+      if (method == "threshold") {
       th <- withProgress(message = "Running threshold segmentation...", value = 0.3, {
         segment_threshold(
           arr,
@@ -1256,17 +1411,16 @@ server <- function(input, output, session) {
         )
       })
 
-      return(list(
+        list(
         type = "threshold",
         seg_arr = th$seg_arr,
         overlay_arr = th$overlay_arr,
         stats = th$stats,
         legend = th$legend,
         mask = th$mask
-      ))
-    }
+        )
+      } else if (method == "kmeans") {
 
-    if (input$method == "kmeans") {
       km <- withProgress(message = "Running k-means RGB clustering...", value = 0.3, {
         segment_kmeans(
           arr,
@@ -1276,17 +1430,16 @@ server <- function(input, output, session) {
         )
       })
 
-      return(list(
+        list(
         type = "kmeans",
         seg_arr = km$seg_arr,
         overlay_arr = km$overlay_arr,
         stats = km$stats,
         legend = km$legend,
         cluster_map = km$cluster_map
-      ))
-    }
+        )
+      } else if (method == "watershed") {
 
-    if (input$method == "watershed") {
       ws <- withProgress(message = "Running marker-controlled watershed...", value = 0.3, {
         segment_marker_watershed(
           arr = arr,
@@ -1298,7 +1451,7 @@ server <- function(input, output, session) {
         )
       })
 
-      return(list(
+        list(
         type = "watershed",
         seg_arr = ws$seg_arr,
         overlay_arr = ws$overlay_arr,
@@ -1306,11 +1459,52 @@ server <- function(input, output, session) {
         legend = ws$legend,
         object_map = ws$object_map,
         n_objects = ws$n_objects
-      ))
-    }
+        )
+      } else {
+        stop("Unknown segmentation method: ", method)
+      }
+    }, error = function(e) {
+      rv$status <- paste("Segmentation error:", conditionMessage(e))
+      showNotification(rv$status, type = "error")
+      NULL
+    })
 
-    NULL
+    if (is.null(result)) return()
+
+    rv$segmentation_result <- result
+    rv$segmentation_input <- arr
+    rv$last_method <- method
+    rv$last_fragmentation_caption <- make_current_caption()
+    rv$segmentation_stale <- FALSE
+    rv$status <- paste0(
+      "Segmentation completed: ", method,
+      if (!is.null(rv$roi)) " | selected ROI" else " | full image"
+    )
+    showNotification("Segmentation completed.", type = "message")
+  }, ignoreInit = TRUE)
+
+  segmentation_result <- reactive({
+    req(rv$segmentation_result)
+    rv$segmentation_result
   })
+
+  observeEvent(list(
+    input$method,
+    input$threshold,
+    input$threshold_invert,
+    input$k_centers,
+    input$k_nstart,
+    input$k_seed,
+    input$ws_threshold,
+    input$ws_invert_mask,
+    input$ws_blur_sigma,
+    input$ws_seed_threshold,
+    input$ws_min_object_px
+  ), {
+    if (!is.null(rv$segmentation_result)) {
+      rv$segmentation_stale <- TRUE
+    }
+  }, ignoreInit = TRUE)
 
   output$plot_original_image <- renderPlot({
     req(rv$image_info)
@@ -1323,12 +1517,12 @@ server <- function(input, output, session) {
       h <- dim(arr)[1]
       w <- dim(arr)[2]
 
-      xleft <- rv$roi$xmin / w
-      xright <- rv$roi$xmax / w
+      xleft <- rv$roi$xmin - 1
+      xright <- rv$roi$xmax
 
       # Convert image row coordinates to plot coordinates.
-      ytop <- 1 - rv$roi$ymin / h
-      ybottom <- 1 - rv$roi$ymax / h
+      ytop <- h - (rv$roi$ymin - 1)
+      ybottom <- h - rv$roi$ymax
 
       rect(xleft, ybottom, xright, ytop, border = "red", lwd = 3)
     }
@@ -1339,7 +1533,7 @@ server <- function(input, output, session) {
 
     arr <- rv$image_info$arr
 
-    if (isTRUE(input$use_roi) && !is.null(rv$roi)) {
+    if (!is.null(rv$roi)) {
       roi_arr <- crop_array_by_roi(arr, rv$roi)$arr
       plot_rgb_array(roi_arr, title = "ROI preview — image passed to segmentation")
     } else {
@@ -1352,7 +1546,7 @@ server <- function(input, output, session) {
       return("No image loaded.")
     }
 
-    if (isTRUE(input$use_roi) && !is.null(rv$roi)) {
+    if (!is.null(rv$roi)) {
       paste0(
         "ROI active: yes\n",
         "x = ", rv$roi$xmin, " - ", rv$roi$xmax, "\n",
@@ -1376,17 +1570,25 @@ server <- function(input, output, session) {
   output$plot_input <- renderPlot({
     req(rv$image_info)
 
-    if (isTRUE(input$use_roi) && !is.null(rv$roi)) {
+    if (!is.null(rv$segmentation_input)) {
+      plot_rgb_array(
+        rv$segmentation_input,
+        title = "Input used for the last segmentation run"
+      )
+    } else if (!is.null(rv$roi)) {
       arr <- crop_array_by_roi(rv$image_info$arr, rv$roi)$arr
-      plot_rgb_array(arr, title = "Input for segmentation — selected ROI")
+      plot_rgb_array(arr, title = "Prepared input — selected ROI (not run yet)")
     } else {
       arr <- rv$image_info$arr
-      plot_rgb_array(arr, title = "Input for segmentation — full image")
+      plot_rgb_array(arr, title = "Prepared input — full image (not run yet)")
     }
   })
 
   output$plot_segmented <- renderPlot({
-    req(segmentation_result())
+    validate(need(
+      !is.null(rv$segmentation_result),
+      "No result yet. Choose settings and click Run segmentation."
+    ))
     res <- segmentation_result()
 
     title <- switch(
@@ -1401,13 +1603,19 @@ server <- function(input, output, session) {
   })
 
   output$plot_overlay <- renderPlot({
-    req(segmentation_result())
+    validate(need(
+      !is.null(rv$segmentation_result),
+      "No result yet. Choose settings and click Run segmentation."
+    ))
     res <- segmentation_result()
     plot_rgb_array(res$overlay_arr, title = "Boundary overlay")
   })
 
   output$plot_legend <- renderPlot({
-    req(segmentation_result())
+    validate(need(
+      !is.null(rv$segmentation_result),
+      "No result yet. Choose settings and click Run segmentation."
+    ))
     res <- segmentation_result()
 
     if (res$type == "threshold") {
@@ -1420,7 +1628,10 @@ server <- function(input, output, session) {
   })
 
   output$stats_table <- renderTable({
-    req(segmentation_result())
+    validate(need(
+      !is.null(rv$segmentation_result),
+      "No statistics yet. Run segmentation first."
+    ))
     segmentation_result()$stats
   })
 
@@ -1428,7 +1639,14 @@ server <- function(input, output, session) {
     paste(
       rv$status,
       "\n\nCurrent method:", input$method,
-      "\nROI active:", isTRUE(input$use_roi) && !is.null(rv$roi),
+      "\nROI active:", !is.null(rv$roi),
+      "\nSegmentation result:", if (is.null(rv$segmentation_result)) {
+        "not run yet"
+      } else if (isTRUE(rv$segmentation_stale)) {
+        "previous result shown; settings or ROI changed — click Run segmentation"
+      } else {
+        "up to date"
+      },
       if (!is.null(rv$image_info)) {
         paste0(
           "\nImage: ", basename(rv$image_info$path),
@@ -1472,7 +1690,7 @@ server <- function(input, output, session) {
     build_segmentation_caption(
       req = NULL,
       method = input$method,
-      use_roi = isTRUE(input$use_roi) && !is.null(rv$roi),
+      use_roi = !is.null(rv$roi),
       k_centers = if (input$method == "kmeans") input$k_centers else NA,
       threshold = if (input$method == "threshold") input$threshold else if (input$method == "watershed") input$ws_threshold else NA,
       nstart = if (input$method == "kmeans") input$k_nstart else NA,
@@ -1481,10 +1699,6 @@ server <- function(input, output, session) {
       ws_min_object_px = if (input$method == "watershed") input$ws_min_object_px else NA
     )
   })
-
-  observeEvent(segmentation_result(), {
-    rv$last_fragmentation_caption <- make_current_caption()
-  }, ignoreInit = TRUE)
 
   make_output_filename <- function(ext = "png") {
     base <- if (!is.null(rv$image_info) && !is.null(rv$image_info$path)) {
@@ -1496,7 +1710,7 @@ server <- function(input, output, session) {
     paste0(
       "fragmentator_",
       base, "_",
-      input$method, "_",
+      if (!is.null(rv$last_method)) rv$last_method else input$method, "_",
       timestamp_stub(),
       ".",
       ext
@@ -1508,8 +1722,7 @@ server <- function(input, output, session) {
     req(segmentation_result())
 
     res <- segmentation_result()
-    caption <- make_current_caption()
-    rv$last_fragmentation_caption <- caption
+    caption <- rv$last_fragmentation_caption
 
     output_png <- file.path(FRAGMENTATOR_OUTPUT_DIR, make_output_filename("png"))
     output_csv <- sub("\\.png$", ".csv", output_png, ignore.case = TRUE)
@@ -1526,7 +1739,7 @@ server <- function(input, output, session) {
           output_png = output_png,
           output_csv = output_csv,
           caption = caption,
-          method = input$method
+          method = rv$last_method
         )
 
         rv$last_saved_result <- standalone_result
@@ -1547,8 +1760,7 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       req(segmentation_result())
-      cap <- make_current_caption()
-      rv$last_fragmentation_caption <- cap
+      cap <- rv$last_fragmentation_caption
 
       export_segmentation_with_legend_png(
         segmentation_result(),
@@ -1564,7 +1776,6 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       req(segmentation_result())
-      rv$last_fragmentation_caption <- make_current_caption()
 
       stats <- segmentation_result()$stats
       write.csv(stats, file, row.names = FALSE)
