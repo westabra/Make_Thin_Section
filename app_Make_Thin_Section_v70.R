@@ -1,3 +1,14 @@
+# MTS_SEARCH_DIAGRAMS_START
+source(file.path(getwd(), "modules", "database_search.R"), local=TRUE, encoding="UTF-8")
+source(file.path(getwd(), "modules", "rock_diagrams.R"), local=TRUE, encoding="UTF-8")
+# V70 Lite: dependencies installed separately; optional external Fragmentator.
+mts_r_version <- paste(R.version$major, strsplit(R.version$minor, ".", fixed=TRUE)[[1]][1], sep=".")
+source(file.path(getwd(), "scripts", "runtime.R"), local=TRUE)
+mts_use_library()
+# V66 update 2026-09-23: collapsed green recovery panel, quiet draft discovery,
+# recovery disabled in LAN read-only mode, updated About and user guide.
+# V64: configurable autosave and explicit draft cleanup. Existing v63 recovery folder retained.
+# V63: durable drafts, browser text recovery, guarded handlers, transactional Save.
 # app.R
 # Petrographic Shiny panel (FULL) — officer 0.7.2 compatible
 
@@ -38,9 +49,7 @@ library(DBI)
 library(RSQLite)
 options(shiny.launch.browser = TRUE)
 options(shiny.maxRequestSize = 50 * 1024^2)  # allow large uploads; images are optimized after upload
-#DB_PATH <- "Y:/PL AND DATABASE/DATABASE/PETROGRAHY DATABASE/petro_db/petro_v3.sqlite"
-DB_PATH <- Sys.getenv("PETRO_DB_PATH", unset = "C:/GCDkit.data/petro_db/petro_v3.sqlite")
-#DB_PATH <- "C:/GCDkit.data/petro_db/exports/Takutu-2025_export.sqlite"
+DB_PATH <- Sys.getenv("PETRO_DB_PATH", unset = "Make_Thin_Section_demo.sqlite")
 
 
 DB_IMAGES_DIR <- file.path(dirname(DB_PATH), "images")
@@ -55,7 +64,8 @@ READ_ONLY_MODE <- identical(Sys.getenv("SHINY_READ_ONLY"), "TRUE")
 # ---- Image Fragmentator launcher (standalone only) ----
 # This launches Image_Fragmentator as a separate Shiny app in a separate R session.
 # No bridge files, no selected image transfer, no sample_id transfer, no automatic import.
-FRAGMENTATOR_APP_PATH <- file.path(getwd(), "image_fragmentator_V6.R")
+FRAGMENTATOR_PORTABLE_ROOT <- "" # resolved from user configuration at launch
+source(file.path(getwd(), "scripts", "fragmentator_launcher.R"), local = TRUE, encoding = "UTF-8")
 MINERAL_WEB_RESOURCES_PATH <- file.path(getwd(), "mineral_reference_web_resources.csv")
 
 # Embedded implementation of export_petrographic_summary_from_SQLite_v2_3.R.
@@ -887,6 +897,237 @@ PETROGRAPHIC_SUMMARY_EXPORTER <- local({
   export_petrographic_summary
 })
 
+# V63: independent recovery storage. No working SQLite writes are used here.
+MTS_FORM_IDS <- c(
+  "sample_id", "project_name", "author", "field_rock_name", "field_desc",
+  "lat", "lon", "rock_name", "grain_size", "texture", "mapping_classifier",
+  "suggested_mapping_unit_id", "mapping_unit_confidence", "mapping_unit_comment_edit",
+  "rock_desc", "m_mineral", "m_vol", "m_morph", "m_gen",
+  "tc_texture", "tc_importance", "tc_domain", "tc_interpretation", "max_sel_images"
+)
+# V64 preferences live next to the drafts, independently of SQLite.
+mts_defaults <- function() list(enabled = TRUE, browser = TRUE, pause_ms = 1500L,
+  interval_ms = 10000L, versions = 3L, retention_days = 0L,
+  automatic_cleanup = FALSE, remove_images = FALSE, warning_mb = 1000L)
+mts_validate_preferences <- function(x) {
+  d <- mts_defaults()
+  if (!is.list(x)) stop("Invalid autosave settings.")
+  for (nm in c("enabled", "browser", "automatic_cleanup", "remove_images")) {
+    if (!is.logical(x[[nm]]) || length(x[[nm]]) != 1L || is.na(x[[nm]])) stop("Invalid setting: ", nm)
+    d[[nm]] <- x[[nm]]
+  }
+  allowed <- list(pause_ms = c(1000,1500,3000,5000,10000), interval_ms = c(5000,10000,30000,60000,120000),
+    versions = c(1,3,5,10), retention_days = c(0,7,30,90,180), warning_mb = c(0,250,500,1000,2000,5000))
+  for (nm in names(allowed)) {
+    val <- suppressWarnings(as.numeric(x[[nm]]))
+    if (length(val) != 1L || is.na(val) || !(val %in% allowed[[nm]])) stop("Invalid setting: ", nm)
+    d[[nm]] <- as.integer(val)
+  }
+  if (d$automatic_cleanup && d$retention_days == 0L) stop("Choose a retention period before enabling automatic cleanup.")
+  d
+}
+mts_read_preferences <- function(root) {
+  paths <- sort(list.files(file.path(root, "_preferences"), pattern = "^[0-9_-]+[.]rds$", full.names = TRUE), decreasing = TRUE)
+  for (path in paths) {
+    x <- tryCatch(mts_validate_preferences(readRDS(path)), error = function(e) NULL)
+    if (!is.null(x)) return(x)
+  }
+  mts_defaults()
+}
+mts_write_preferences <- function(root, x) {
+  x <- mts_validate_preferences(x)
+  folder <- file.path(root, "_preferences")
+  mts_prepare_dir(folder)
+  temp <- tempfile("pending-", folder)
+  on.exit(if (file.exists(temp)) unlink(temp), add = TRUE)
+  saveRDS(x, temp, version = 2)
+  if (!identical(readRDS(temp), x)) stop("Could not verify autosave settings.")
+  filename <- paste0(format(Sys.time(), "%Y%m%d%H%M%OS6"), "_", Sys.getpid(), ".rds")
+  filename <- gsub("[.]", "", sub("[.]rds$", "", filename))
+  path <- file.path(folder, paste0(filename, ".rds"))
+  if (file.exists(path) || !file.rename(temp, path)) stop("Could not save autosave settings.")
+  paths <- sort(list.files(folder, pattern = "^[0-9_-]+[.]rds$", full.names = TRUE), decreasing = TRUE)
+  if (length(paths) > 3L) unlink(paths[-seq_len(3L)])
+  invisible(x)
+}
+mts_child_path <- function(path, root) {
+  rp <- tolower(normalizePath(root, winslash = "/", mustWork = TRUE))
+  pp <- tolower(normalizePath(path, winslash = "/", mustWork = TRUE))
+  startsWith(pp, paste0(rp, "/")) && !nzchar(Sys.readlink(path))
+}
+mts_record_dirs <- function(root) {
+  dirs <- list.dirs(root, recursive = FALSE, full.names = TRUE)
+  dirs <- dirs[grepl("^session_[a-zA-Z0-9]+_[a-f0-9]{16}$", basename(dirs))]
+  dirs[vapply(dirs, mts_child_path, logical(1), root = root)]
+}
+mts_touch_session <- function(root, session_id) {
+  folder <- file.path(root, "_active")
+  mts_prepare_dir(folder)
+  path <- file.path(folder, session_id)
+  if (!file.exists(path)) writeLines("active", path) else Sys.setFileTime(path, Sys.time())
+  invisible(path)
+}
+mts_active_sessions <- function(root, now = Sys.time()) {
+  paths <- list.files(file.path(root, "_active"), pattern = "^session_[a-zA-Z0-9]+$", full.names = TRUE)
+  if (!length(paths)) return(character(0))
+  fi <- file.info(paths)
+  basename(paths[!is.na(fi$mtime) & as.numeric(difftime(now, fi$mtime, units = "secs")) < 180])
+}
+mts_expired_records <- function(root, days, protect = character(0), now = Sys.time()) {
+  if (days <= 0 || !dir.exists(root)) return(list())
+  protect <- unique(c(protect, mts_active_sessions(root, now)))
+  cutoff <- as.numeric(now) - days * 86400
+  out <- list()
+  for (folder in mts_record_dirs(root)) {
+    id <- basename(folder)
+    if (any(vapply(protect, function(p) startsWith(id, paste0(p, "_")), logical(1)))) next
+    paths <- list.files(folder, pattern = "^[0-9]+[.]rds$", full.names = TRUE)
+    if (!length(paths)) next
+    if (any(!vapply(paths, mts_child_path, logical(1), root = root))) next
+    states <- lapply(paths, function(p) tryCatch(readRDS(p), error = function(e) NULL))
+    valid <- vapply(states, function(x) is.list(x) && identical(x$version, 1L) && identical(x$id, id) &&
+      is.list(x$state) && is.numeric(x$time) && length(x$time) == 1L && is.finite(x$time), logical(1))
+    # Unknown/corrupt files are retained for recovery rather than guessed to be disposable.
+    if (!all(valid)) next
+    times <- vapply(states, function(x) x$time, numeric(1))
+    if (max(times) >= cutoff) next
+    newest <- states[[which.max(times)]]
+    out[[id]] <- list(id = id, files = paths, newest = max(times),
+      sample = newest$state$raw$sample_id %||% "unnamed", project = newest$state$raw$project_name %||% "")
+  }
+  out
+}
+mts_clean_records <- function(root, days, ids = NULL, protect = character(0), now = Sys.time()) {
+  candidates <- mts_expired_records(root, days, protect, now)
+  if (!is.null(ids)) candidates <- candidates[intersect(names(candidates), ids)]
+  removed <- character(0)
+  for (x in candidates) {
+    # Delete only recognized revision files, never recursively remove a directory.
+    ok <- vapply(x$files, function(p) {
+      if (!file.exists(p) || !mts_child_path(p, root)) return(FALSE)
+      isTRUE(file.remove(p))
+    }, logical(1))
+    if (all(ok)) removed <- c(removed, x$id)
+  }
+  removed
+}
+mts_unused_images <- function(root, now = Sys.time(), exclude_records = character(0)) {
+  folder <- file.path(root, "assets")
+  if (!dir.exists(folder) || !mts_child_path(folder, root)) return(character(0))
+  referenced <- character(0)
+  for (dir in mts_record_dirs(root)) {
+    if (basename(dir) %in% exclude_records) next
+    # A writer with an unfinished revision might not have published its image references yet.
+    if (length(list.files(dir, pattern = "^pending-"))) return(character(0))
+    paths <- list.files(dir, pattern = "^[0-9]+[.]rds$", full.names = TRUE)
+    for (path in paths) {
+      state <- tryCatch(readRDS(path), error = function(e) NULL)
+      if (is.null(state) || !is.list(state$state)) return(character(0))
+      for (item in state$state$pool) {
+        if (!is.null(item$path)) referenced <- c(referenced, tolower(normalizePath(item$path, winslash = "/", mustWork = FALSE)))
+      }
+    }
+  }
+  files <- list.files(folder, pattern = "^[a-f0-9]{32}[.][a-zA-Z0-9]*$", full.names = TRUE)
+  if (!length(files)) return(character(0))
+  fi <- file.info(files)
+  old <- !is.na(fi$mtime) & as.numeric(difftime(now, fi$mtime, units = "hours")) >= 24
+  safe <- vapply(files, mts_child_path, logical(1), root = root)
+  files[old & safe & !(tolower(normalizePath(files, winslash = "/", mustWork = FALSE)) %in% referenced)]
+}
+mts_storage_usage <- function(root) {
+  dirs <- mts_record_dirs(root)
+  populated <- dirs[vapply(dirs, function(d) length(list.files(d, pattern = "^[0-9]+[.]rds$")) > 0L, logical(1))]
+  files <- list.files(root, recursive = TRUE, full.names = TRUE)
+  if (length(files)) files <- files[vapply(files, mts_child_path, logical(1), root = root)]
+  list(records = length(populated), mb = sum(file.info(files)$size, na.rm = TRUE) / 1024^2,
+    images = length(list.files(file.path(root, "assets"), pattern = "^[a-f0-9]{32}[.]")))
+}
+
+mts_filter_inputs <- function(x) {
+  if (!is.list(x)) return(list())
+  x <- x[names(x) %in% MTS_FORM_IDS | grepl("^(cap_|chk_|ord_)", names(x))]
+  x[vapply(x, function(v) is.atomic(v) && length(v) <= 100L, logical(1))]
+}
+mts_recovery_root <- function(db_path = DB_PATH) {
+  base <- Sys.getenv("MTS_DRAFT_DIR", unset = "")
+  if (!nzchar(base)) {
+    local_dir <- Sys.getenv("LOCALAPPDATA", unset = "")
+    if (!nzchar(local_dir)) local_dir <- tools::R_user_dir("MakeThinSection", "data")
+    base <- file.path(local_dir, "MakeThinSection", "drafts")
+  }
+  file.path(base, substr(digest::digest(normalizePath(db_path, winslash = "/", mustWork = FALSE), algo = "sha256"), 1L, 16L))
+}
+mts_prepare_dir <- function(path) {
+  if (!dir.exists(path) && !dir.create(path, recursive = TRUE, showWarnings = FALSE))
+    stop("Cannot create local recovery folder: ", path)
+  invisible(path)
+}
+mts_write_revision <- function(root, id, state, counter, image_cache = NULL, keep_versions = 3L) {
+  stopifnot(length(keep_versions) == 1L, keep_versions %in% c(1L,3L,5L,10L))
+  stopifnot(grepl("^[a-zA-Z0-9_-]+$", id))
+  dest_dir <- file.path(root, id)
+  mts_prepare_dir(dest_dir)
+  assets <- file.path(root, "assets")
+  for (i in seq_along(state$pool)) {
+    item <- state$pool[[i]]
+    src <- item$path
+    if (is.null(src) || !file.exists(src)) stop("Draft image is unavailable: ", item$name)
+    fi <- file.info(src)
+    cache_key <- paste(src, fi$size, as.numeric(fi$mtime), sep = "|")
+    saved <- if (!is.null(image_cache)) image_cache[[cache_key]] else NULL
+    if (is.null(saved) || !file.exists(saved)) {
+      mts_prepare_dir(assets)
+      hash <- as.character(tools::md5sum(src))
+      if (is.na(hash)) stop("Cannot read draft image: ", src)
+      saved <- file.path(assets, paste0(hash, ".", tolower(tools::file_ext(src))))
+      if (!file.exists(saved)) {
+        tmp_image <- tempfile("image-", assets)
+        if (!isTRUE(file.copy(src, tmp_image))) stop("Cannot copy image into local draft.")
+        if (!identical(as.character(tools::md5sum(tmp_image)), hash)) stop("Draft image copy failed verification.")
+        if (!file.rename(tmp_image, saved)) {
+          if (!file.exists(saved)) stop("Cannot finish local draft image copy.")
+          unlink(tmp_image)
+        }
+      }
+      if (!is.null(image_cache)) image_cache[[cache_key]] <- saved
+    }
+    Sys.setFileTime(saved, Sys.time()) # protect reused assets from concurrent age cleanup
+    state$pool[[i]]$path <- saved
+    state$pool[[i]]$url <- NULL
+  }
+  envelope <- list(version = 1L, id = id, time = as.numeric(Sys.time()), state = state)
+  tmp <- tempfile("pending-", dest_dir)
+  on.exit(if (file.exists(tmp)) unlink(tmp), add = TRUE)
+  saveRDS(envelope, tmp, version = 2)
+  if (!identical(readRDS(tmp), envelope)) stop("Local draft verification failed.")
+  final <- file.path(dest_dir, sprintf("%012d.rds", as.integer(counter)))
+  if (file.exists(final) || !file.rename(tmp, final)) stop("Cannot finish writing local draft.")
+  # New immutable revision exists before older revisions are removed.
+  revisions <- sort(list.files(dest_dir, pattern = "^[0-9]+[.]rds$", full.names = TRUE), decreasing = TRUE)
+  if (length(revisions) > keep_versions) unlink(revisions[-seq_len(keep_versions)])
+  envelope
+}
+mts_read_drafts <- function(root) {
+  if (!dir.exists(root)) return(list())
+  dirs <- list.dirs(root, recursive = FALSE, full.names = TRUE)
+  out <- list()
+  for (folder in dirs) {
+    paths <- sort(list.files(folder, pattern = "^[0-9]+[.]rds$", full.names = TRUE), decreasing = TRUE)
+    for (path in paths) {
+      x <- tryCatch(readRDS(path), error = function(e) NULL)
+      if (is.list(x) && identical(x$version, 1L) && is.list(x$state)) {
+        out[[x$id]] <- x
+        break
+      }
+    }
+  }
+  if (length(out)) out <- out[order(vapply(out, function(x) x$time, numeric(1)), decreasing = TRUE)]
+  out
+}
+
+MTS_RECOVERY_JS <- "(function () {\n  'use strict';\n  let config = null, current = null, connected = false, writeTimer = null;\n  let pending = {}, applying = false, tick = 0;\n  let epoch = 0, suspended = false, recordCounter = 0, sequence = 0, lastSent = '';\n  const identityRecords = new Map();\n  function identity(raw) { return JSON.stringify([raw.project_name || '', raw.sample_id || '']); }\n  function meaningful(raw) {\n    return ['sample_id','field_rock_name','field_desc','lat','lon','rock_name','rock_desc','m_vol','m_morph','m_gen','tc_domain','tc_interpretation','mapping_unit_comment_edit']\n      .some(function(k) { return String(raw[k] || '').trim().length > 0; });\n  }\n  const $ = window.jQuery;\n  function status(id, text) { const el = document.getElementById(id); if (el) el.textContent = text; }\n  function allowed(id) { return config && (config.fields.indexOf(id) >= 0 || /^(cap_|chk_|ord_)/.test(id)); }\n  function elementFor(target) {\n    if (!target) return null;\n    if (allowed(target.id)) return target;\n    const control = target.closest && target.closest('.selectize-control');\n    const prior = control && control.previousElementSibling;\n    return prior && allowed(prior.id) ? prior : null;\n  }\n  function readValue(el) {\n    if (el.selectize) {\n      const typed = el.selectize.$control_input.val();\n      return typed && typed.length ? typed : el.selectize.getValue();\n    }\n    return el.type === 'checkbox' ? el.checked : $(el).val();\n  }\n  function values() {\n    const raw = {};\n    document.querySelectorAll('input[id],textarea[id],select[id]').forEach(function (el) {\n      if (allowed(el.id)) raw[el.id] = readValue(el);\n    });\n    return raw;\n  }\n  function store() {\n    if (!config || !current || config.browser === false) return;\n    try {\n      localStorage.setItem(config.prefix + current.id, JSON.stringify(current));\n      status('mts_browser_status', 'Browser text backup: ' + new Date(current.time * 1000).toLocaleTimeString());\n    } catch (e) {\n      status('mts_browser_status', 'Browser backup unavailable. Use the local draft status below.');\n    }\n  }\n  function capture(options) {\n    if (!config || applying || suspended) return;\n    options = options || {};\n    const raw = Object.assign({}, pending, values());\n    const key = identity(raw);\n    if (meaningful(raw) || (current && identity(current.raw) === key)) {\n      let record = identityRecords.get(key);\n      if (!record) {\n        record = {id:config.id+'_browser_'+(++recordCounter), raw:{}, time:0};\n        identityRecords.set(key, record);\n      }\n      current = record;\n      if (JSON.stringify(current.raw) !== JSON.stringify(raw)) {\n        current.raw = raw; current.time = Date.now()/1000; store();\n      }\n    }\n    const serialized = JSON.stringify(raw);\n    if (connected && (lastSent !== serialized || options.manual || options.settled)) {\n      lastSent = serialized;\n      Shiny.setInputValue('mts_live_snapshot', JSON.stringify({raw:raw, epoch:epoch, seq:++sequence,\n        manual:!!options.manual, settled:!!options.settled}), {priority:'event'});\n    }\n  }\n  function records() {\n    const result = [];\n    try {\n      for (let i = 0; i < localStorage.length; i++) {\n        const key = localStorage.key(i);\n        if (key.indexOf(config.prefix) !== 0) continue;\n        try { const r = JSON.parse(localStorage.getItem(key)); if (r && r.raw && r.id) result.push(r); } catch (_) {}\n      }\n    } catch (_) {}\n    return result.sort(function (a, b) { return b.time - a.time; });\n  }\n  function sendRecords() {\n    if (connected && config) Shiny.setInputValue('mts_browser_records', JSON.stringify(records()), {priority: 'event'});\n  }\n  function applyPending() {\n    applying = true;\n    Object.keys(pending).forEach(function (id) {\n      const el = document.getElementById(id);\n      if (!el || !allowed(id)) return;\n      const v = pending[id];\n      if (el.selectize) {\n        const vals = Array.isArray(v) ? v : [v == null ? '' : String(v)];\n        vals.forEach(function (s) { if (s && !el.selectize.options[s]) el.selectize.addOption({value: s, label: s}); });\n        el.selectize.setValue(v == null ? '' : v, true);\n      } else if (el.type === 'checkbox') el.checked = !!v;\n      else if (el.tagName === 'SELECT') {\n        if (v != null && !Array.from(el.options).some(function (o) { return o.value === String(v); })) el.add(new Option(String(v), String(v)));\n        $(el).val(v);\n      } else $(el).val(v == null ? '' : v);\n      $(el).trigger('change');\n      Shiny.setInputValue(id, v == null ? '' : v, {priority: 'event'});\n      delete pending[id];\n    });\n    applying = false;\n  }\n  Shiny.addCustomMessageHandler('mts_config', function (msg) {\n    config = msg;\n    connected = true;\n    sendRecords();\n    current = null;\n    status('mts_connection_status', 'Connected to Shiny');\n    status('mts_browser_status', config.browser === false ? 'Browser text backup is OFF' : 'Browser text backup ready');\n    Shiny.setInputValue('mts_client_ready', Date.now(), {priority: 'event'});\n  });\n  Shiny.addCustomMessageHandler('mts_draft_written', function (msg) {\n    const key = JSON.stringify([msg.project || '', msg.sample || '']);\n    const record = identityRecords.get(key);\n    if (record) {\n      record.disk_id = msg.id;\n      if (config.browser !== false) {\n        try { localStorage.setItem(config.prefix+record.id, JSON.stringify(record)); } catch (_) {}\n      }\n    }\n  });\n  function settle(msg, restoreRaw) {\n    if (msg.epoch < epoch) return;\n    epoch = msg.epoch; suspended = true;\n    let prior = '', stable = 0, attempts = 0;\n    function check() {\n      if (msg.epoch !== epoch) return;\n      if (restoreRaw) { pending = Object.assign({}, restoreRaw); applyPending(); }\n      const now = JSON.stringify(values());\n      stable = now === prior ? stable + 1 : 0; prior = now;\n      if (++attempts >= 5 && stable >= 3) {\n        suspended = false; lastSent = ''; capture({settled:true}); return;\n      }\n      if (attempts >= 60) {\n        status('mts_browser_status', 'Form is still changing. Draft saving is paused; do not close this page.'); return;\n      }\n      setTimeout(check, 200);\n    }\n    setTimeout(check, 200);\n  }\n  Shiny.addCustomMessageHandler('mts_pause', function(msg) {\n    epoch = msg.epoch; suspended = true; pending = {}; lastSent = '';\n  });\n  Shiny.addCustomMessageHandler('mts_settle', function(msg) { settle(msg); });\n  Shiny.addCustomMessageHandler('mts_restore_inputs', function (msg) {\n    pending = msg.raw || {};\n    applyPending();\n    settle(msg, msg.raw || {});\n  });\n\n  Shiny.addCustomMessageHandler('mts_preferences', function (msg) {\n    if (!config) return;\n    if (msg.browser === false) capture();\n    config.browser = msg.browser;\n    status('mts_browser_status', config.browser === false ? 'Browser text backup is OFF' : 'Browser text backup ready');\n    if (config.browser !== false) capture();\n  });\n  Shiny.addCustomMessageHandler('mts_cleanup_preview_request', function (msg) {\n    Shiny.setInputValue('mts_cleanup_browser_inventory', JSON.stringify(records().map(function(r) { return {id:r.id,time:r.time}; })), {priority:'event'});\n  });\n  Shiny.addCustomMessageHandler('mts_cleanup_browser', function (msg) {\n    if (!config || !msg.days || msg.days <= 0) { sendRecords(); return; }\n    const cutoff = Date.now()/1000 - msg.days*86400;\n    const protect = Array.isArray(msg.protect) ? msg.protect : [msg.protect];\n    const ids = msg.ids == null ? null : (Array.isArray(msg.ids) ? msg.ids : [msg.ids]);\n    let failures = 0;\n    records().forEach(function(r) {\n      if (r.time >= cutoff || (current && r.id === current.id) || (ids && ids.indexOf(r.id) < 0)) return;\n      if (protect.some(function(p) { return p && (r.id === p || r.id.indexOf(p+'_') === 0); })) return;\n      try { localStorage.removeItem(config.prefix+r.id); } catch(e) { failures++; }\n    });\n    if (failures) status('mts_browser_status', 'Some old browser backups could not be removed.');\n    sendRecords();\n  });\n\n  Shiny.addCustomMessageHandler('mts_request_browser_records', function (msg) { capture(); sendRecords(); });\n  Shiny.addCustomMessageHandler('mts_heartbeat_ack', function (msg) {\n    connected = true;\n    status('mts_connection_status', 'Connected to Shiny · ' + new Date().toLocaleTimeString());\n  });\n  $(document).on('shiny:bound', function () { if (connected && Object.keys(pending).length) setTimeout(applyPending, 0); });\n  $(document).on('shiny:connected', function () { connected = true; status('mts_connection_status', 'Connected to Shiny'); });\n  $(document).on('shiny:disconnected', function () {\n    capture(); connected = false;\n    status('mts_connection_status', 'Disconnected. Restart the app if needed, reload this page, then choose Restore draft.');\n  });\n  document.addEventListener('input', function (e) {\n    const el = elementFor(e.target); if (!el || applying) return;\n    delete pending[el.id];\n    if (writeTimer === null) writeTimer = setTimeout(function () { writeTimer = null; capture(); }, 200);\n  }, true);\n  document.addEventListener('change', function (e) { if (elementFor(e.target) && !applying) capture(); }, true);\n  document.addEventListener('click', function(e) {\n    const button = e.target.closest && e.target.closest('button');\n    if (button) capture({manual:button.id === 'mts_save_draft'});\n  }, true);\n  window.addEventListener('pagehide', capture);\n  document.addEventListener('visibilitychange', function () { if (document.hidden) capture(); });\n  // Keeps traffic flowing while the browser is running; never touches SQLite.\n  setInterval(function () {\n    if (connected && config) Shiny.setInputValue('mts_heartbeat', ++tick, {priority: 'event'});\n  }, 25000);\n})();\n"
+
 ensure_db_dirs <- function() {
   # In read-only LAN mode we do not create folders. The application should only
   # use the existing SQLite database and existing image/export directories.
@@ -897,14 +1138,15 @@ ensure_db_dirs <- function() {
   if (!dir.exists(DB_EXPORTS_DIR)) dir.create(DB_EXPORTS_DIR, recursive = TRUE, showWarnings = FALSE)
 }
 db_connect <- function(read_only = READ_ONLY_MODE) {
-  if (isTRUE(read_only)) {
-    # Physical SQLite read-only connection. This prevents INSERT/UPDATE/DELETE
-    # even if a write handler is accidentally triggered.
-    dbConnect(SQLite(), dbname = DB_PATH, flags = RSQLite::SQLITE_RO)
-  } else {
-    ensure_db_dirs()
-    dbConnect(SQLite(), DB_PATH)
-  }
+  # The production database must already exist; a missing share must not create an empty DB.
+  if (!file.exists(DB_PATH)) stop("SQLite file is unavailable: ", DB_PATH)
+  con <- DBI::dbConnect(RSQLite::SQLite(), dbname = DB_PATH,
+    flags = if (isTRUE(read_only)) RSQLite::SQLITE_RO else RSQLite::SQLITE_RW)
+  ok <- FALSE
+  on.exit(if (!ok) try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+  DBI::dbExecute(con, "PRAGMA busy_timeout = 10000")
+  ok <- TRUE
+  con
 }
 db_init <- function(con) {
   # Schema creation and ALTER TABLE are write operations. In read-only LAN mode
@@ -1654,6 +1896,44 @@ build_user_guide_ui <- function(path = file.path(getwd(), "README.md")) {
   )
 }
 
+mts_preferences_ui <- function(p) wellPanel(
+    tags$p("These settings are saved on this computer for this database. Use Save autosave settings below; SQLite is not required."),
+    checkboxInput("mts_pref_enabled", "Automatically save local drafts", p$enabled),
+    checkboxInput("mts_pref_browser", "Also keep a browser text backup", p$browser),
+    fluidRow(
+      column(4, selectInput("mts_pref_pause", "Save after a typing pause",
+        choices = c("1 second"=1000,"1.5 seconds"=1500,"3 seconds"=3000,"5 seconds"=5000,"10 seconds"=10000), selected=p$pause_ms)),
+      column(4, selectInput("mts_pref_interval", "During continuous typing, save every",
+        choices = c("5 seconds"=5000,"10 seconds"=10000,"30 seconds"=30000,"1 minute"=60000,"2 minutes"=120000), selected=p$interval_ms)),
+      column(4, selectInput("mts_pref_versions", "Versions per sample in each session",
+        choices = c(1,3,5,10), selected=p$versions))
+    ),
+    tags$p(class="small-note", "Lowering the version count takes effect on the next write of that draft. Save draft now remains available when automatic saving is off."),
+    tags$hr(),
+    fluidRow(
+      column(6, selectInput("mts_pref_days", "Old draft retention",
+        choices = c("Keep indefinitely"=0,"7 days"=7,"30 days"=30,"90 days"=90,"180 days"=180), selected=p$retention_days)),
+      column(6, selectInput("mts_pref_warning", "Warn when local storage exceeds",
+        choices = c("No warning"=0,"250 MB"=250,"500 MB"=500,"1 GB"=1000,"2 GB"=2000,"5 GB"=5000), selected=p$warning_mb))
+    ),
+    checkboxInput("mts_pref_auto_clean", "Automatically delete expired inactive drafts (checked every 30 minutes)", p$automatic_cleanup),
+    checkboxInput("mts_pref_clean_images", "During cleanup, delete unreferenced image copies older than 24 hours", p$remove_images),
+    tags$p(class="small-note", style="color:#8a4b08;",
+      "Age-based cleanup includes drafts that were NEVER saved to SQLite. Active sessions are protected. Keep indefinitely disables age-based deletion. The size limit is a warning, not automatic deletion."),
+    actionButton("mts_preferences_save", "Save autosave settings", class="btn-primary"),
+    actionButton("mts_preferences_reset", "Restore recommended values"),
+    textOutput("mts_preferences_status"),
+    tags$hr(),
+    tags$label(`for`="mts_folder_display", "Draft folder (on the computer running R)"),
+    tags$input(id="mts_folder_display", type="text", class="form-control", readonly="readonly",
+      value=normalizePath(mts_recovery_root(), winslash="\\", mustWork=FALSE), style="margin-bottom:8px;"),
+    actionButton("mts_open_folder", "Open draft folder"),
+    actionButton("mts_usage_refresh", "Refresh storage usage"),
+    textOutput("mts_storage_status"),
+    actionButton("mts_cleanup_preview", "Preview cleanup..."),
+    tags$p(class="small-note", "Preview uses the saved retention settings and asks before deletion. Existing v63 drafts remain available in this same folder.")
+  )
+
 ui <- fluidPage(
   tags$head(
     tags$style(HTML("
@@ -1792,6 +2072,17 @@ ui <- fluidPage(
       .project-map-settings[open] > summary::after {
         content: '-';
       }
+      .work-recovery > summary {
+        background: #dff0d8;
+        border-color: #a6c7ad;
+        color: #2f6138;
+      }
+      .work-recovery > summary:hover,
+      .work-recovery[open] > summary {
+        background: #cce8c4;
+        border-color: #77a581;
+        color: #244d2c;
+      }
       .map-style-header {
         display: flex;
         align-items: center;
@@ -1847,6 +2138,16 @@ ui <- fluidPage(
         border-color: #2e6da4;
         background: #eef6fb;
         box-shadow: inset 0 0 0 1px #2e6da4;
+      }
+      /* Keep the active project and sample visible while the page scrolls. */
+      .sticky-project-sample-header {
+        position: -webkit-sticky;
+        position: sticky;
+        top: 0;
+        z-index: 1050;
+        background: #ffffff;
+        padding-top: 1px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
       }
       :root { --thumb-zoom-scale: 1.9; --img-card-width: 280px; --img-thumb-height: 170px; }
       /* ========= TEXTAREA RESIZE ========= */
@@ -2037,7 +2338,10 @@ ui <- fluidPage(
 
   ),
 
-  uiOutput("dynamic_header"),
+  tags$div(
+    class = "sticky-project-sample-header",
+    uiOutput("dynamic_header")
+  ),
   
   sidebarLayout(
     sidebarPanel(
@@ -2115,11 +2419,22 @@ downloadButton("download_docx", "Generate DOCX"),
 tags$hr(),
       h4("SQLite database (fixed path)"),
       tags$p(class="small-note", paste0("DB: ", DB_PATH)),
+      if (!READ_ONLY_MODE) tags$script(HTML(MTS_RECOVERY_JS)),
       actionButton("save_sample_btn", "Save sample to SQLite"),
 tags$div(style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;",
         actionButton("new_sample_btn", "New Sample"),
         actionButton("reset_form_btn", "Reset Form"),
         actionButton("clone_prev_btn", "Clone previous sample")
+      ),
+      if (!READ_ONLY_MODE) tags$details(
+        class = "project-map-settings work-recovery",
+        tags$summary("Work recovery (Click to open)"),
+        tags$div(style = "border:1px solid #a6c7ad; padding:10px; margin-top:6px; background:#f4faf5;",
+          tags$div(id = "mts_connection_status", role = "status", "Connecting to Shiny..."),
+          tags$div(id = "mts_browser_status", class = "small-note", "Browser backup starting..."),
+          textOutput("mts_local_draft_status"),
+          actionButton("mts_save_draft", "Save draft now"),
+          actionButton("mts_restore_draft", "Restore draft"))
       ),
 tags$hr(),
       h4("Image upload (container)"),
@@ -2238,6 +2553,13 @@ tags$hr(),
           actionButton("delete_sample_btn", "Delete sample from SQLite", class = "btn-danger")
           ),
           tags$hr(),
+          tags$details(
+            class = "project-map-settings work-recovery",
+            tags$summary("Search rock descriptions (Click to open)"),
+            tags$div(style = "border:1px solid #a6c7ad; padding:10px; margin-top:6px; background:#f4faf5;",
+              mts_database_search_ui("rock_search"))
+          ),
+          tags$hr(),
           h4("New sample description"),
           tags$p(
             class = "small-note",
@@ -2274,6 +2596,7 @@ tags$hr(),
           )
         ,
 
+        mts_rock_diagrams_ui("rock_diagrams"),
         tabPanel(
           "QAPF",
           h4("QAPF diagram") ,
@@ -2479,6 +2802,7 @@ tags$hr(),
         ),
 tabPanel(
   "Settings",
+
   tags$div(
     style = "display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;",
     tags$div(
@@ -2486,7 +2810,8 @@ tabPanel(
       tags$p(
         class = "small-note",
         style = "margin-bottom:0;",
-        "These settings are shared through the current SQLite database."
+        if (READ_ONLY_MODE) "These database settings are shared through SQLite. Autosave and recovery are unavailable in LAN read-only mode."
+        else "These database settings are shared through SQLite. Local autosave settings are available using the button at the bottom."
       )
     ),
     actionButton("about_program_btn", "About Program", class = "btn settings-secondary-btn")
@@ -2508,7 +2833,7 @@ tabPanel(
     ),
     checkboxInput("confirm_load_setting", "Confirm before loading a sample", value = TRUE),
     textInput("panel_bg_setting", "Description panel background color (hex)", value = "#ffffff", placeholder = "#ffffff"),
-    tags$p(class = "small-note", "The panel color is previewed immediately; Save all settings makes it persistent.")
+    tags$p(class = "small-note", "The panel color is previewed immediately; Save database settings makes it persistent.")
   ),
 
   wellPanel(
@@ -2544,7 +2869,7 @@ tabPanel(
     tags$p(
       class = "small-note",
       style = "margin-top:8px; margin-bottom:0;",
-      "Updates the cards in the Image container immediately. Use Save all settings to keep this size after restart."
+      "Updates the cards in the Image container immediately. Use Save database settings to keep this size after restart."
     )
   ),
 
@@ -2556,7 +2881,7 @@ tabPanel(
     wellPanel(
       tags$p(
         class = "small-note",
-        "Images are standardized to JPEG and compressed when they are imported. These limits apply to newly imported images; use Save all settings to keep them after restart."
+        "Images are standardized to JPEG and compressed when they are imported. These limits apply to newly imported images; use Save database settings to keep them after restart."
       ),
       tags$p(
         class = "small-note",
@@ -2591,9 +2916,12 @@ tabPanel(
 
   tags$div(
     style = "display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:12px; border-top:1px solid #ddd;",
-    actionButton("save_settings_btn", "Save all settings", class = "btn btn-primary"),
-    actionButton("discard_settings_btn", "Discard unsaved changes", class = "btn settings-secondary-btn"),
+    actionButton("save_settings_btn", "Save database settings", class = "btn btn-primary"),
+    actionButton("discard_settings_btn", "Discard database setting changes", class = "btn settings-secondary-btn"),
     uiOutput("settings_save_status")
+  ),
+  if (!READ_ONLY_MODE) tags$div(style="margin-top:18px; padding:12px; border-top:1px solid #eee;",
+    actionButton("mts_preferences_open", "Autosave and recovery...", class="btn btn-default")
   )
 ),
 tabPanel(
@@ -2648,9 +2976,12 @@ tabPanel(
           "Image container (sorted)",
           tags$div(
             style = "display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;",
-            actionButton("launch_fragmentator_btn", "Launch Fragmentator", class="btn btn-primary"),
+            actionButton("launch_fragmentator_btn", "Launch Fragmentator 7.7.0", class="btn btn-primary"),
+            if (!READ_ONLY_MODE) actionButton("configure_fragmentator_btn", "Configure Fragmentator"),
+            actionButton("stop_fragmentator_btn", "Stop Fragmentator", class="btn btn-default"),
             actionButton("about_fragmentator_btn", "About Fragmentator", class="btn btn-default")
           ),
+          verbatimTextOutput("fragmentator_launcher_status"),
           tags$hr(),
           tags$h4("Paste from clipboard"),
           tags$p(class = "small-note",
@@ -2667,6 +2998,85 @@ uiOutput("image_gallery_ui")
   )
 )
 server <- function(input, output, session) {
+  # V63: an ordinary handler error must not destroy the editing session.
+  mts_root <- if (!READ_ONLY_MODE) mts_recovery_root() else NULL
+  mts_session_id <- paste0("session_", gsub("[^a-zA-Z0-9]", "", session$token))
+  mts_counter <- 0L
+  mts_prefs <- reactiveVal(if (!READ_ONLY_MODE) mts_read_preferences(mts_root) else mts_defaults())
+  mts_preference_note <- reactiveVal("Saved autosave settings loaded.")
+  mts_usage <- reactiveVal(if (!READ_ONLY_MODE) mts_storage_usage(mts_root) else NULL)
+  mts_cleanup_note <- reactiveVal("")
+  mts_cleanup_plan <- reactiveVal(NULL)
+  mts_last_maintenance <- as.numeric(Sys.time())
+  mts_warning_active <- FALSE
+  mts_image_cache <- new.env(parent = emptyenv())
+  mts_ready <- reactiveVal(FALSE)
+  mts_restoring <- reactiveVal(FALSE)
+  mts_status <- reactiveVal(if (isTRUE(isolate(mts_prefs()$enabled))) "Waiting for the form. Drafts are separate from Save to SQLite." else "Automatic local saving is OFF. Save draft now remains available.")
+  mts_candidates <- reactiveVal(list())
+  mts_browser <- reactiveVal(list())
+  mts_last_state <- NULL
+  mts_restored_raw <- list()
+  mts_decode <- function(x) {
+    if (is.character(x) && length(x)==1L) return(jsonlite::fromJSON(x, simplifyVector=FALSE))
+    x
+  }
+  mts_live <- reactiveVal(list())
+  mts_epoch <- 0L
+  mts_transition <- reactiveVal(FALSE)
+  mts_restore_requested <- FALSE
+  mts_begin_transition <- function() {
+    if (READ_ONLY_MODE) return(invisible(NULL))
+    mts_epoch <<- mts_epoch + 1L
+    mts_transition(TRUE)
+    mts_status("Updating the form; draft saving resumes after the form is ready.")
+    mts_live(list()); mts_restored_raw <<- list()
+    session$sendCustomMessage("mts_pause", list(epoch=mts_epoch))
+  }
+  mts_end_transition <- function() {
+    if (READ_ONLY_MODE) return(invisible(NULL))
+    epoch <- mts_epoch
+    session$onFlushed(function() {
+      session$sendCustomMessage("mts_settle", list(epoch=epoch))
+    }, once=TRUE)
+  }
+  mts_report_error <- function(e) {
+    if (inherits(e, "shiny.silent.error")) return(invisible(NULL))
+    line <- paste(format(Sys.time(), "%Y-%m-%d %H:%M:%S"), conditionMessage(e))
+    message("MakeThinSection: ", line)
+    if (!READ_ONLY_MODE) try({ mts_prepare_dir(mts_root); cat(line, "\n", file = file.path(mts_root, "errors.log"), append = TRUE) }, silent = TRUE)
+    showNotification(paste0("Operation failed: ", conditionMessage(e),
+      if (READ_ONLY_MODE) ". The Shiny session is still open." else ". The Shiny session is still open. Check the draft status before retrying."),
+      type = "error", duration = NULL)
+    invisible(NULL)
+  }
+  mts_guard <- function(expr) {
+    tryCatch(force(expr), error = function(e) {
+      if (inherits(e, "shiny.silent.error")) stop(e)
+      mts_report_error(e)
+    })
+  }
+  # Preserve Shiny's expression environments, return/on.exit behavior, and ... options.
+  observeEvent <- function(eventExpr, handlerExpr, ...) {
+    shiny::observeEvent(eventExpr = substitute(eventExpr),
+      handlerExpr = substitute(mts_guard(BODY), list(BODY = substitute(handlerExpr))),
+      event.env = parent.frame(), handler.env = parent.frame(),
+      event.quoted = TRUE, handler.quoted = TRUE, ...)
+  }
+  observe <- function(x, ...) {
+    shiny::observe(substitute(mts_guard(BODY), list(BODY = substitute(x))),
+      env = parent.frame(), quoted = TRUE, ...)
+  }
+  # Save a final received snapshot on orderly disconnection. Crashes rely on earlier copies.
+  session$onSessionEnded(function() {
+    if (READ_ONLY_MODE) return(invisible(NULL))
+    final_state <- tryCatch(if (isTRUE(isolate(mts_restoring())) || isTRUE(isolate(mts_transition()))) mts_last_state else isolate(mts_capture_state()),
+      error = function(e) mts_last_state)
+    if (isTRUE(isolate(mts_prefs()$enabled)) && !is.null(final_state) && mts_has_content(final_state)) try(mts_persist(final_state), silent = TRUE)
+    marker <- file.path(mts_root, "_active", mts_session_id)
+    if (file.exists(marker)) try(file.remove(marker), silent=TRUE)
+  })
+
 
   # ---- V62: editable curated web resources for Mineral Reference ----
   empty_web_resources <- function() {
@@ -2936,228 +3346,77 @@ server <- function(input, output, session) {
     showModal(modalDialog(
       title = "About Make Thin Section",
       tags$p("Petrographic description, image management, SQLite storage and DOCX/GIS reporting application."),
-      tags$p(tags$b("Application version: "), "62 — Mineral Reference redesign and online search"),
+      tags$p(tags$b("Application version: "), "66 — Autosave settings in a separate window"),
       tags$p(
         class = "small-note",
-        "Settings on this tab are stored in the current SQLite database and may therefore be shared by users of the same database."
+        if (READ_ONLY_MODE) "Database settings are shared through SQLite. Autosave and recovery are unavailable in LAN read-only mode."
+        else "Database settings are shared through SQLite. Autosave and retention preferences are saved locally beside the recovery drafts."
       ),
       footer = modalButton("Close"),
       easyClose = TRUE
     ))
   }, ignoreInit = TRUE)
 
+  observeEvent(input$configure_fragmentator_btn, {
+    if (READ_ONLY_MODE || !(isolate(session$clientData$url_hostname %||% "") %in% c("", "localhost", "127.0.0.1", "::1"))) return()
+    showModal(modalDialog(title="Optional Image Fragmentator",
+      tags$p("Not included in V70 Lite. Enter the folder of an existing 7.7.0 Portable installation. Install its dependencies separately."),
+      textInput("fragmentator_folder", "Installation folder", value=mts_fragmentator_root()),
+      footer=tagList(modalButton("Cancel"), actionButton("save_fragmentator_folder", "Save path"))))
+  }, ignoreInit=TRUE)
+  observeEvent(input$save_fragmentator_folder, {
+    if (READ_ONLY_MODE || !(isolate(session$clientData$url_hostname %||% "") %in% c("", "localhost", "127.0.0.1", "::1"))) return()
+    tryCatch({ path <- mts_validate_fragmentator(input$fragmentator_folder);
+      writeLines(enc2utf8(path), "fragmentator_path.txt", useBytes=TRUE); removeModal();
+      showNotification("Fragmentator path saved. MTS_FRAGMENTATOR_ROOT overrides this setting if present.")
+    }, error=function(e) showNotification(conditionMessage(e), type="error"))
+  }, ignoreInit=TRUE)
   # ---- Image Fragmentator launcher (standalone only) ----
   fragmentator_launcher_status <- reactiveVal("")
 
   # V59: sample-level mapping-unit comment is edited in a modal dialog.
   mapping_unit_comment_rv <- reactiveVal("")
 
-  find_fragmentator_app <- function() {
-    candidates <- unique(c(
-      FRAGMENTATOR_APP_PATH,
-      file.path(getwd(), "image_fragmentator_V5_standalone_no_bridge.R"),
-      file.path(dirname(DB_PATH), "image_fragmentator_V5_standalone_no_bridge.R"),
-      file.path(dirname(DB_PATH), "tools", "image_fragmentator_V5_standalone_no_bridge.R")
-    ))
-
-    candidates <- normalizePath(candidates, winslash = "/", mustWork = FALSE)
-    hit <- candidates[file.exists(candidates)]
-
-    if (length(hit) < 1) {
-      stop(paste0(
-        "Image Fragmentator was not found.\n\n",
-        "Checked paths:\n",
-        paste(candidates, collapse = "\n"),
-        "\n\nPlace image_fragmentator_V6.R in the same folder as this app, ",
-        "or in the petro_db folder, or in petro_db/tools, or edit FRAGMENTATOR_APP_PATH at the top of this script."
-      ))
-    }
-
-    hit[1]
-  }
-
-  fragmentator_preflight <- function() {
-    cran_pkgs <- c("shiny", "magick", "png")
-    bioc_pkgs <- c("EBImage")
-    helper_pkgs <- c("BiocManager")
-
-    missing_cran <- cran_pkgs[!vapply(cran_pkgs, requireNamespace, logical(1), quietly = TRUE)]
-    missing_helper <- helper_pkgs[!vapply(helper_pkgs, requireNamespace, logical(1), quietly = TRUE)]
-    missing_bioc <- bioc_pkgs[!vapply(bioc_pkgs, requireNamespace, logical(1), quietly = TRUE)]
-
-    list(
-      ok = length(c(missing_cran, missing_helper, missing_bioc)) == 0,
-      missing_cran = missing_cran,
-      missing_helper = missing_helper,
-      missing_bioc = missing_bioc
-    )
-  }
-
-  show_fragmentator_preflight_modal <- function(check) {
-    install_lines <- character(0)
-
-    cran_all <- c(check$missing_cran, check$missing_helper)
-    if (length(cran_all) > 0) {
-      install_lines <- c(
-        install_lines,
-        paste0("install.packages(c(", paste(shQuote(cran_all), collapse = ", "), "))")
-      )
-    }
-
-    if (length(check$missing_bioc) > 0) {
-      install_lines <- c(install_lines, "BiocManager::install(\"EBImage\", ask = FALSE, update = FALSE)")
-    }
-
-    showModal(modalDialog(
-      title = "Image Fragmentator dependencies",
-      easyClose = TRUE,
-      size = "l",
-      tags$p(
-        "Image Fragmentator needs a few additional image-analysis packages before it can launch."
-      ),
-      tags$p(
-        "Install the missing packages once in R, then click Launch Fragmentator again."
-      ),
-      tags$pre(paste(install_lines, collapse = "\n")),
-      tags$p(class = "small-note",
-             "EBImage is distributed through Bioconductor, so it is installed with BiocManager."),
-      footer = tagList(
-        modalButton("Close")
-      )
-    ))
-  }
-
-  launch_fragmentator_standalone <- function() {
-    app_path <- find_fragmentator_app()
-
-    rscript <- file.path(
-      R.home("bin"),
-      if (.Platform$OS.type == "windows") "Rscript.exe" else "Rscript"
-    )
-    if (!file.exists(rscript)) rscript <- "Rscript"
-
-    launcher_dir <- file.path(tempdir(), "Make_Thin_Section_fragmentator_launcher")
-    if (!dir.exists(launcher_dir)) {
-      dir.create(launcher_dir, recursive = TRUE, showWarnings = FALSE)
-    }
-
-    runner_path <- file.path(launcher_dir, "run_fragmentator_standalone.R")
-    log_path <- file.path(launcher_dir, "fragmentator_standalone_launch.log")
-    bat_path <- file.path(launcher_dir, "run_fragmentator_standalone.bat")
-
-    app_path_norm <- normalizePath(app_path, winslash = "/", mustWork = TRUE)
-    launcher_dir_norm <- normalizePath(launcher_dir, winslash = "/", mustWork = FALSE)
-    log_path_norm <- normalizePath(log_path, winslash = "/", mustWork = FALSE)
-
-    runner_lines <- c(
-      paste0("log_path <- ", shQuote(log_path_norm)),
-      paste0("app_path <- ", shQuote(app_path_norm)),
-      "cat('\\n--- Image Fragmentator standalone launch ---\\n', file = log_path, append = TRUE)",
-      "cat('Time: ', format(Sys.time(), '%Y-%m-%d %H:%M:%S'), '\\n', file = log_path, append = TRUE)",
-      "cat('App path: ', app_path, '\\n', file = log_path, append = TRUE)",
-      "cat('Working directory: ', dirname(app_path), '\\n', file = log_path, append = TRUE)",
-      "find_free_port <- function(start = 3860, end = 3899) {",
-      "  for (p in seq.int(start, end)) {",
-      "    con <- tryCatch(socketConnection(host = '127.0.0.1', port = p, open = 'r+', blocking = FALSE, timeout = 0.2), error = function(e) NULL)",
-      "    if (is.null(con)) return(p)",
-      "    try(close(con), silent = TRUE)",
-      "  }",
-      "  stop('No free port found in range 3860:3899')",
-      "}",
-      "tryCatch({",
-      "  setwd(dirname(app_path))",
-      "  options(shiny.launch.browser = TRUE)",
-      "  port_use <- find_free_port(3860, 3899)",
-      "  cat('Starting Image Fragmentator on http://127.0.0.1:', port_use, '/\\n', sep = '', file = log_path, append = TRUE)",
-      "  app_env <- new.env(parent = globalenv())",
-      "  app_obj <- source(app_path, local = app_env)$value",
-      "  if (inherits(app_obj, 'shiny.appobj')) {",
-      "    shiny::runApp(app_obj, launch.browser = TRUE, host = '127.0.0.1', port = port_use)",
-      "  } else {",
-      "    stop('Fragmentator script did not return a Shiny app object.')",
-      "  }",
-      "}, error = function(e) {",
-      "  cat('ERROR: ', conditionMessage(e), '\\n', file = log_path, append = TRUE)",
-      "  cat('TRACEBACK:\\n', file = log_path, append = TRUE)",
-      "  tb <- capture.output(traceback())",
-      "  cat(paste(tb, collapse = '\\n'), '\\n', file = log_path, append = TRUE)",
-      "  stop(e)",
-      "})"
-    )
-
-    writeLines(runner_lines, runner_path, useBytes = TRUE)
-
-    if (.Platform$OS.type == "windows") {
-      # More reliable Windows launch:
-      # - create a .bat file;
-      # - open it with shell.exec();
-      # - keep a visible cmd window open with /k so possible errors are not hidden.
-      #
-      # This is better for debugging than system2(..., wait = FALSE), which may fail silently
-      # depending on Windows/RStudio/session policy.
-
-      rscript_win <- normalizePath(rscript, winslash = "/", mustWork = FALSE)
-      runner_win  <- normalizePath(runner_path, winslash = "/", mustWork = FALSE)
-      log_win     <- normalizePath(log_path, winslash = "/", mustWork = FALSE)
-
-      bat_lines <- c(
-        "@echo off",
-        "title Image Fragmentator launcher",
-        paste0("\"", rscript_win, "\" \"", runner_win, "\""),
-        "exit /b 0"
-      )
-
-      writeLines(bat_lines, bat_path, useBytes = TRUE)
-      system2(
-        command = "cmd.exe",
-        args = c("/c", "start", "\"Image Fragmentator\"", shQuote(normalizePath(bat_path, winslash = "\\", mustWork = FALSE))),
-        wait = FALSE,
-        invisible = TRUE
-      )
-    } else {
-      system2(
-        command = rscript,
-        args = shQuote(runner_path),
-        wait = FALSE,
-        invisible = FALSE
-      )
-    }
-
-    list(
-      app_path = app_path_norm,
-      runner_path = normalizePath(runner_path, winslash = "/", mustWork = FALSE),
-      bat_path = normalizePath(bat_path, winslash = "/", mustWork = FALSE),
-      log_path = log_path_norm
-    )
-  }
-
+  fragmentator_process <- NULL
+  session$onSessionEnded(function() {
+    if (!is.null(fragmentator_process) && fragmentator_process$is_alive()) fragmentator_process$kill_tree()
+  })
   observeEvent(input$launch_fragmentator_btn, {
+    host <- isolate(session$clientData$url_hostname %||% "")
+    if (nzchar(host) && !(host %in% c("127.0.0.1", "localhost", "::1"))) {
+      showNotification("Launch Fragmentator on the computer running this app, or use the portable package on your own computer.", type="warning")
+      return()
+    }
     tryCatch({
-      dep_check <- fragmentator_preflight()
-      if (!isTRUE(dep_check$ok)) {
-        show_fragmentator_preflight_modal(dep_check)
-        missing_txt <- paste(c(dep_check$missing_cran, dep_check$missing_helper, dep_check$missing_bioc), collapse = ", ")
-        fragmentator_launcher_status(paste("Image Fragmentator dependencies are missing:", missing_txt))
-        return(invisible(FALSE))
+      if (!is.null(fragmentator_process) && fragmentator_process$is_alive()) {
+        showNotification("Fragmentator is already running. Use its existing browser tab.", type="message")
+        return()
       }
-
-      info <- launch_fragmentator_standalone()
-
-      fragmentator_launcher_status(paste0(
-        "Last launch information\n\n",
-        "Fragmentator app:\n", info$app_path, "\n\n",
-        "Launcher script:\n", info$runner_path, "\n\n",
-        "Windows BAT launcher:\n", info$bat_path, "\n\n",
-        "Launch log:\n", info$log_path
-      ))
-
-      showNotification("Image Fragmentator launched.", type = "message", duration = 4)
-    }, error = function(e) {
-      fragmentator_launcher_status(paste("Image Fragmentator launch error:", e$message))
-      showNotification(paste("Image Fragmentator launch error:", e$message), type = "error", duration = 8)
+      info <- mts_launch_fragmentator(mts_fragmentator_root())
+      fragmentator_process <<- info$process
+      fragmentator_launcher_status(paste("Image Fragmentator 7.7.0 starting:", info$url,
+        "\nLog:", info$log_path, "\nClose this Make Thin Section session or click Stop Fragmentator to stop this process."))
+      showNotification("Starting Image Fragmentator 7.7.0 Portable...", type="message", duration=5)
+    }, error=function(e) {
+      fragmentator_launcher_status(paste("Launch failed:", conditionMessage(e)))
+      showNotification(conditionMessage(e), type="error", duration=10)
     })
-  }, ignoreInit = TRUE)
-
+  }, ignoreInit=TRUE)
+  observeEvent(input$stop_fragmentator_btn, {
+    if (!is.null(fragmentator_process) && fragmentator_process$is_alive()) fragmentator_process$kill_tree()
+    fragmentator_process <<- NULL
+    fragmentator_launcher_status("Fragmentator stopped. Export results before stopping it.")
+  }, ignoreInit=TRUE)
+  output$fragmentator_launcher_status <- renderText(fragmentator_launcher_status())
+  observe({
+    invalidateLater(3000, session)
+    if (!is.null(fragmentator_process) && !fragmentator_process$is_alive()) {
+      code <- fragmentator_process$get_exit_status()
+      fragmentator_launcher_status(paste("Fragmentator exited (code", code,
+        "). See logs/launched-from-mts.log in the configured Fragmentator installation."))
+      fragmentator_process <<- NULL
+    }
+  })
 
   output$mapping_comment_status_ui <- renderUI({
     cm <- trimws(mapping_unit_comment_rv() %||% "")
@@ -3202,7 +3461,7 @@ server <- function(input, output, session) {
       footer = modalButton("Close"),
       tags$div(
         tags$p(
-          "Image Fragmentator is a small standalone tool for experimental segmentation ",
+          "Image Fragmentator is an optional separate application, not included in V70 Lite. Configure an existing 7.7.0 Portable installation for experimental segmentation ",
           "of petrographic and geological images."
         ),
         tags$p(
@@ -3212,7 +3471,7 @@ server <- function(input, output, session) {
         ),
         tags$p(
           "Current methods include grayscale threshold segmentation, k-means RGB clustering, ",
-          "and experimental marker-controlled watershed segmentation."
+          "marker-controlled watershed segmentation, and experimental GrainSight/FastSAM segmentation."
         ),
         tags$div(
           style = "background:#fff3cd; border:1px solid #ffeeba; padding:10px; border-radius:6px;",
@@ -3241,7 +3500,7 @@ server <- function(input, output, session) {
     session$sendCustomMessage("setCssVar", list(name = "--img-thumb-height", value = paste0(thumb_h, "px")))
 
     showNotification(
-      "Image card size applied. Use Save all settings to keep it after restart.",
+      "Image card size applied. Use Save database settings to keep it after restart.",
       type = "message",
       duration = 3
     )
@@ -3580,7 +3839,9 @@ foid-gabbro", srt=63, cex=0.9)
       footer = modalButton("Close"),
       tags$div(
         tags$h4("Make_Thin_Section"),
-        tags$p(tags$b("Version: "), "62 - Mineral Reference redesign + editable web-resource hub"),
+        tags$p(tags$b("Version: "), "70 Lite - separate R dependencies and optional Image Fragmentator (2026-10-13)"),
+        tags$p("Local recovery drafts and browser text backups protect unfinished descriptions independently of SQLite. Restore a draft, review the form, then save explicitly to SQLite."),
+        tags$p("Work recovery opens below New Sample, Reset Form and Clone previous sample. Autosave and recovery settings open from Settings. Both features are unavailable in LAN read-only mode."),
         tags$p( "Shiny console creating a convenient platform for thin section description. ",
                 "Data can be exported to a Word document. Data are stored in an SQLite database."),
         tags$hr(),
@@ -3661,7 +3922,7 @@ foid-gabbro", srt=63, cex=0.9)
         id = new_id,
         name = paste0(base_name, ".png"),
         ext = "png",
-        url = paste0("petro_img/", basename(out_path)),
+        url = paste0(paste0(mts_image_resource, "/"), basename(out_path)),
         path = out_path,
         is_converted = FALSE,
         origin = "qapf_export",
@@ -3866,6 +4127,9 @@ snapshot_current_form <- function() {
 }
 
 reset_form_common <- function(keep_project_author = TRUE, set_defaults = TRUE) {
+  mts_save_now(force = TRUE)
+  mts_begin_transition()
+  on.exit(mts_end_transition(), add=TRUE)
   # snapshot before clearing (for Clone)
   last_sample_snapshot(snapshot_current_form())
 
@@ -3967,6 +4231,9 @@ observeEvent(input$clone_prev_btn, {
     return()
   }
 
+  mts_save_now(force=TRUE)
+  mts_begin_transition()
+  on.exit(mts_end_transition(), add=TRUE)
   cur_proj <- isolate(input$project_name %||% "")
   cur_auth <- isolate(input$author %||% "")
 
@@ -4095,12 +4362,12 @@ observeEvent(input$clone_prev_btn, {
 # =========================
 # SQLite init + settings
 # =========================
-ensure_db_dirs()
-local({
+mts_guard(ensure_db_dirs())
+mts_guard(local({
   con <- db_connect()
   on.exit(dbDisconnect(con), add = TRUE)
   db_init(con)
-})
+}))
 # Keep Project selector populated from DB
 observe({
   con <- db_connect()
@@ -4111,7 +4378,7 @@ observe({
   if (nzchar(cur) && !(cur %in% projs)) projs <- unique(c(projs, cur))
   # Update choices ONLY (do not force selection). This prevents the selector from snapping
   # back to the first item (often the Default Project) during UI refreshes after loading a sample.
-  updateSelectizeInput(session, "project_name", choices = projs, server = TRUE)
+  updateSelectizeInput(session, "project_name", choices = projs, selected = cur, server = TRUE)
   default_project <- isolate(input$project_default %||% "")
   default_choices <- unique(c(projs, default_project))
   default_choices <- default_choices[nzchar(trimws(default_choices))]
@@ -5880,7 +6147,7 @@ load_library <- function(selection_override = list(), quiet = FALSE) {
     mineral_choices_rv(ch)
     cur_m <- selected_value("m_mineral", isolate(input$m_mineral %||% ""))
     cur_l <- selected_value("lib_mineral", isolate(input$lib_mineral %||% ""))
-    updateSelectizeInput(session, "m_mineral", choices = ch, selected = if (nzchar(cur_m)) cur_m else NULL, server = TRUE)
+    updateSelectizeInput(session, "m_mineral", choices = ch, selected = if (nzchar(cur_m)) cur_m else "", server = TRUE)
     updateSelectizeInput(session, "lib_mineral", choices = ch, selected = if (nzchar(cur_l)) cur_l else NULL, server = FALSE)
     updateSelectizeInput(session, "web_ref_minerals", choices = ch,
                          selected = isolate(input$web_ref_minerals %||% character(0)), server = TRUE)
@@ -6343,6 +6610,7 @@ if (!is.null(tt2) && "texture_title" %in% names(tt2)) {
   mineral_table_proxy <- DT::dataTableProxy("mineral_table")
 
   observeEvent(input$mineral_table_rows_selected, {
+    if (isTRUE(mts_restoring())) return()
     sel <- input$mineral_table_rows_selected
     if (length(sel) != 1) return()
     df <- minerals()
@@ -6665,9 +6933,11 @@ if (!is.null(tt2) && "texture_title" %in% names(tt2)) {
   }, ignoreInit = TRUE)
   
   # ---------------- Images ----------------
-  img_dir <- file.path(tempdir(), "petro_shiny_images")
+  mts_image_resource <- paste0("petro_img_", mts_session_id)
+  img_dir <- file.path(tempdir(), mts_image_resource)
   if (!dir.exists(img_dir)) dir.create(img_dir, recursive = TRUE)
-  addResourcePath("petro_img", img_dir)
+  addResourcePath(mts_image_resource, img_dir)
+  session$onSessionEnded(function() removeResourcePath(mts_image_resource))
   addResourcePath("db_img", DB_IMAGES_DIR)
 
 
@@ -6972,7 +7242,7 @@ optimize_image_to_jpeg <- function(in_path, out_base, max_bytes = max_image_byte
         id = id,
         name = orig_name,
         ext = final_ext,
-        url = paste0("petro_img/", basename(dest)),
+        url = paste0(paste0(mts_image_resource, "/"), basename(dest)),
         path = dest,
         is_converted = TRUE,
         origin = "upload",
@@ -7043,7 +7313,7 @@ final_ext <- opt$ext %||% "jpg"
       id = make_img_id(),
       name = paste0("Clipboard ", stamp),
       ext = final_ext,
-      url = paste0("petro_img/", basename(final_path)),
+      url = paste0(paste0(mts_image_resource, "/"), basename(final_path)),
       path = final_path,
       is_converted = TRUE,
       origin = "clipboard",
@@ -7788,6 +8058,7 @@ archive_unselected_image_files <- function(con, candidates, project_name, sample
 save_sample_sqlite <- function(removed_image_action = c("keep", "archive"), removed_candidates = NULL) {
   removed_image_action <- match.arg(removed_image_action)
   if (stop_if_read_only("saving to SQLite")) return(invisible(FALSE))
+  mts_save_now(force = TRUE)
   sync_captions_from_inputs()
   sid <- trimws(input$sample_id %||% "")
   if (!nzchar(sid)) {
@@ -7803,6 +8074,123 @@ save_sample_sqlite <- function(removed_image_action = c("keep", "archive"), remo
   con <- db_connect()
   on.exit(dbDisconnect(con), add = TRUE)
   db_init(con)
+  pid <- get_project_id(con, proj_nm)
+  # --- Images: avoid cloning on repeated Save ---
+  # Replace image rows for this sample (we will re-insert in the current order)
+  # IMPORTANT: avoid creating image clones on repeated saves.
+  # Strategy:
+  #   - read existing image rows BEFORE deleting
+  #   - build hash -> existing relative path map (MD5 of file contents)
+  #   - when saving, if an incoming image has the same hash as an existing one,
+  #     reuse the existing file_path (no copy)
+  existing_imgs <- dbGetQuery(con, "SELECT file_path FROM images WHERE project_id = :pid AND sample_id = :sid",
+               params = list(pid = pid, sid = sid))
+
+  existing_hash_to_rel <- list()
+  if (!is.null(existing_imgs) && nrow(existing_imgs) > 0) {
+    for (fp in unique(existing_imgs$file_path)) {
+      abs_fp <- tryCatch(resolve_image_path(fp), error = function(e) NA_character_)
+      if (!is.na(abs_fp) && file.exists(abs_fp)) {
+        h <- tryCatch(as.character(tools::md5sum(abs_fp)), error = function(e) NA_character_)
+        if (!is.na(h) && !nzchar(existing_hash_to_rel[[h]] %||% "")) {
+          existing_hash_to_rel[[h]] <- fp
+        } else if (!is.na(h) && is.null(existing_hash_to_rel[[h]])) {
+          existing_hash_to_rel[[h]] <- fp
+        }
+      }
+    }
+  }
+
+
+  rows <- list()
+  pool <- img_pool()
+  sel_ids <- limited_selected_image_ids()
+
+  if (length(sel_ids) > 0 && length(pool) > 0) {
+    by_id <- setNames(pool, vapply(pool, function(x) x$id, character(1)))
+
+    proj_dir <- file.path(DB_IMAGES_DIR, safe_name(proj_nm), safe_name(sid))
+    if (!dir.exists(proj_dir)) dir.create(proj_dir, recursive = TRUE)
+
+    rows <- list()
+
+    clean_to_jpg <- function(filename) {
+      # Remove stacked extensions like .jpg.jpg or .png.jpg etc, then add .jpg
+      base <- basename(filename)
+      stem <- sub("(\\.(jpg|jpeg|png|tif|tiff|bmp|webp))+$", "", base, ignore.case = TRUE)
+      paste0(stem, ".jpg")
+    }
+
+    for (i in seq_along(sel_ids)) {
+      id <- sel_ids[i]
+      if (!id %in% names(by_id)) next
+      item <- by_id[[id]]
+
+      if (is.null(item$path) || !file.exists(item$path)) stop("Selected image is missing: ", item$name)
+      src_abs <- normalizePath(item$path, winslash = "/", mustWork = FALSE)
+
+      # Hash of incoming file (content-based de-duplication)
+      src_hash <- tryCatch(as.character(tools::md5sum(src_abs)), error = function(e) NA_character_)
+
+      # If we already have the same image stored for this sample (same hash), reuse it.
+      reused_rel <- NULL
+      if (!is.na(src_hash) && !is.null(existing_hash_to_rel[[src_hash]])) {
+        reused_rel <- existing_hash_to_rel[[src_hash]]
+        reused_abs <- tryCatch(resolve_image_path(reused_rel), error = function(e) NA_character_)
+        if (!is.na(reused_abs) && file.exists(reused_abs)) {
+          rel_path <- normalize_slashes(reused_rel)
+          rows[[length(rows) + 1]] <- data.frame(
+            project_id = pid,
+            sample_id  = sid,
+            img_order  = i,
+            file_path  = rel_path,
+            caption    = get_caption_for_image_id(id, i),
+            stringsAsFactors = FALSE
+          )
+          next
+        }
+      }
+
+      # Otherwise copy into the DB images folder (one-time)
+      basefile <- clean_to_jpg(src_abs)
+      dest_abs <- file.path(proj_dir, paste0(sprintf("%02d", i), "_", basefile))
+      dest_abs <- normalizePath(dest_abs, winslash = "/", mustWork = FALSE)
+
+      # If source is already the destination path, keep as-is
+      if (!(normalizePath(src_abs, winslash = "/", mustWork = FALSE) ==
+            normalizePath(dest_abs, winslash = "/", mustWork = FALSE))) {
+
+        # If destination exists (different file), make a unique name
+        if (file.exists(dest_abs)) {
+          stem <- tools::file_path_sans_ext(basefile)
+          dest_abs <- file.path(
+            proj_dir,
+            paste0(sprintf("%02d", i), "_", stem, "_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+          )
+          dest_abs <- normalizePath(dest_abs, winslash = "/", mustWork = FALSE)
+        }
+
+        if (!isTRUE(file.copy(src_abs, dest_abs, overwrite = TRUE)))
+          stop("Could not copy image to the database folder: ", dest_abs)
+      }
+
+      rel_path <- file.path("images", safe_name(proj_nm), safe_name(sid), basename(dest_abs))
+      rel_path <- chartr("\\", "/", rel_path)
+
+      rows[[length(rows) + 1]] <- data.frame(
+        project_id = pid,
+        sample_id  = sid,
+        img_order  = i,
+        file_path  = rel_path,
+        caption    = get_caption_for_image_id(id, i),
+        stringsAsFactors = FALSE
+      )
+    }
+
+
+  }
+
+  DBI::dbWithTransaction(con, {
   pid <- ensure_project_id(con, proj_nm)
   dbExecute(con, "
     INSERT INTO samples (
@@ -7891,125 +8279,14 @@ save_sample_sqlite <- function(removed_image_action = c("keep", "archive"), remo
     }
   }
   
-  # --- Images: avoid cloning on repeated Save ---
-  # Replace image rows for this sample (we will re-insert in the current order)
-  # IMPORTANT: avoid creating image clones on repeated saves.
-  # Strategy:
-  #   - read existing image rows BEFORE deleting
-  #   - build hash -> existing relative path map (MD5 of file contents)
-  #   - when saving, if an incoming image has the same hash as an existing one,
-  #     reuse the existing file_path (no copy)
-  existing_imgs <- tryCatch(
-    dbGetQuery(con, "SELECT file_path FROM images WHERE project_id = :pid AND sample_id = :sid",
-               params = list(pid = pid, sid = sid)),
-    error = function(e) data.frame()
-  )
-
-  existing_hash_to_rel <- list()
-  if (!is.null(existing_imgs) && nrow(existing_imgs) > 0) {
-    for (fp in unique(existing_imgs$file_path)) {
-      abs_fp <- tryCatch(resolve_image_path(fp), error = function(e) NA_character_)
-      if (!is.na(abs_fp) && file.exists(abs_fp)) {
-        h <- tryCatch(as.character(tools::md5sum(abs_fp)), error = function(e) NA_character_)
-        if (!is.na(h) && !nzchar(existing_hash_to_rel[[h]] %||% "")) {
-          existing_hash_to_rel[[h]] <- fp
-        } else if (!is.na(h) && is.null(existing_hash_to_rel[[h]])) {
-          existing_hash_to_rel[[h]] <- fp
-        }
-      }
-    }
-  }
-
   dbExecute(con, "DELETE FROM images WHERE project_id = :pid AND sample_id = :sid",
             params = list(pid = pid, sid = sid))
-
-  pool <- img_pool()
-  sel_ids <- limited_selected_image_ids()
-
-  if (length(sel_ids) > 0 && length(pool) > 0) {
-    by_id <- setNames(pool, vapply(pool, function(x) x$id, character(1)))
-
-    proj_dir <- file.path(DB_IMAGES_DIR, safe_name(proj_nm), safe_name(sid))
-    if (!dir.exists(proj_dir)) dir.create(proj_dir, recursive = TRUE)
-
-    rows <- list()
-
-    clean_to_jpg <- function(filename) {
-      # Remove stacked extensions like .jpg.jpg or .png.jpg etc, then add .jpg
-      base <- basename(filename)
-      stem <- sub("(\\.(jpg|jpeg|png|tif|tiff|bmp|webp))+$", "", base, ignore.case = TRUE)
-      paste0(stem, ".jpg")
-    }
-
-    for (i in seq_along(sel_ids)) {
-      id <- sel_ids[i]
-      if (!id %in% names(by_id)) next
-      item <- by_id[[id]]
-
-      if (is.null(item$path) || !file.exists(item$path)) next
-      src_abs <- normalizePath(item$path, winslash = "/", mustWork = FALSE)
-
-      # Hash of incoming file (content-based de-duplication)
-      src_hash <- tryCatch(as.character(tools::md5sum(src_abs)), error = function(e) NA_character_)
-
-      # If we already have the same image stored for this sample (same hash), reuse it.
-      reused_rel <- NULL
-      if (!is.na(src_hash) && !is.null(existing_hash_to_rel[[src_hash]])) {
-        reused_rel <- existing_hash_to_rel[[src_hash]]
-        reused_abs <- tryCatch(resolve_image_path(reused_rel), error = function(e) NA_character_)
-        if (!is.na(reused_abs) && file.exists(reused_abs)) {
-          rel_path <- normalize_slashes(reused_rel)
-          rows[[length(rows) + 1]] <- data.frame(
-            project_id = pid,
-            sample_id  = sid,
-            img_order  = i,
-            file_path  = rel_path,
-            caption    = get_caption_for_image_id(id, i),
-            stringsAsFactors = FALSE
-          )
-          next
-        }
-      }
-
-      # Otherwise copy into the DB images folder (one-time)
-      basefile <- clean_to_jpg(src_abs)
-      dest_abs <- file.path(proj_dir, paste0(sprintf("%02d", i), "_", basefile))
-      dest_abs <- normalizePath(dest_abs, winslash = "/", mustWork = FALSE)
-
-      # If source is already the destination path, keep as-is
-      if (!(normalizePath(src_abs, winslash = "/", mustWork = FALSE) ==
-            normalizePath(dest_abs, winslash = "/", mustWork = FALSE))) {
-
-        # If destination exists (different file), make a unique name
-        if (file.exists(dest_abs)) {
-          stem <- tools::file_path_sans_ext(basefile)
-          dest_abs <- file.path(
-            proj_dir,
-            paste0(sprintf("%02d", i), "_", stem, "_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
-          )
-          dest_abs <- normalizePath(dest_abs, winslash = "/", mustWork = FALSE)
-        }
-
-        file.copy(src_abs, dest_abs, overwrite = TRUE)
-      }
-
-      rel_path <- file.path("images", safe_name(proj_nm), safe_name(sid), basename(dest_abs))
-      rel_path <- chartr("\\", "/", rel_path)
-
-      rows[[length(rows) + 1]] <- data.frame(
-        project_id = pid,
-        sample_id  = sid,
-        img_order  = i,
-        file_path  = rel_path,
-        caption    = get_caption_for_image_id(id, i),
-        stringsAsFactors = FALSE
-      )
-    }
-
-    if (length(rows) > 0) {
-      dbWriteTable(con, "images", do.call(rbind, rows), append = TRUE)
-    }
+  if (length(rows) > 0) {
+    image_rows <- do.call(rbind, rows)
+    image_rows$project_id <- pid
+    dbWriteTable(con, "images", image_rows, append = TRUE)
   }
+  })
 
   archive_result <- list(moved = 0L, skipped = 0L, failed = 0L)
   if (identical(removed_image_action, "archive") &&
@@ -8053,6 +8330,7 @@ save_sample_sqlite <- function(removed_image_action = c("keep", "archive"), remo
   invisible(TRUE)
 }
 load_sample_sqlite <- function(project_name, sid) {
+  mts_save_now(force = TRUE)
   proj_nm <- trimws(project_name %||% "")
   sid <- trimws(sid %||% "")
   if (!nzchar(proj_nm) || !nzchar(sid)) return()
@@ -8064,13 +8342,43 @@ load_sample_sqlite <- function(project_name, sid) {
     showNotification("Project not found in DB.", type = "error")
     return()
   }
-  samp <- tryCatch(dbGetQuery(con, "SELECT * FROM samples WHERE project_id = :pid AND sample_id = :sid",
-                              params = list(pid = pid, sid = sid)),
-                   error = function(e) NULL)
+  samp <- dbGetQuery(con, "SELECT * FROM samples WHERE project_id = :pid AND sample_id = :sid",
+                              params = list(pid = pid, sid = sid))
   if (is.null(samp) || nrow(samp) == 0) {
     showNotification("Sample not found in DB.", type = "error")
     return()
   }
+  mdf <- dbGetQuery(con, "SELECT row_order, mineral, vol_text, morphology, genesis FROM mineral_composition WHERE project_id = :pid AND sample_id = :sid ORDER BY row_order",
+                             params = list(pid = pid, sid = sid))
+  tdf <- dbGetQuery(con, "SELECT row_order, texture, importance, domain, interpretation FROM sample_textures WHERE project_id = :pid AND sample_id = :sid ORDER BY row_order",
+                             params = list(pid = pid, sid = sid))
+  imgs <- dbGetQuery(con, "SELECT img_order, file_path, caption FROM images WHERE project_id = :pid AND sample_id = :sid ORDER BY img_order",
+                              params = list(pid = pid, sid = sid))
+  pool <- list(); sel <- character(0); caps <- list()
+  if (!is.null(imgs) && nrow(imgs) > 0) {
+    pool <- list(); sel <- character(0); caps <- list()
+    for (i in seq_len(nrow(imgs))) {
+      fp <- as.character(imgs$file_path[i] %||% "")
+      abs_fp <- resolve_image_path(fp)
+      if (!nzchar(fp) || is.na(abs_fp) || !file.exists(abs_fp)) stop("Image is unavailable: ", fp)
+      nm <- basename(abs_fp)
+      dest <- tempfile("load_", img_dir, paste0(".", tools::file_ext(nm)))
+      if (!isTRUE(file.copy(abs_fp, dest))) stop("Could not prepare image: ", fp)
+      id <- make_img_id()
+      pool[[length(pool)+1]] <- list(
+        id=id, name=nm, ext=tolower(tools::file_ext(dest)),
+        url=paste0(paste0(mts_image_resource, "/"), basename(dest)),
+        path=dest, is_converted=FALSE, origin="db",
+        order=as.integer(imgs$img_order[i] %||% i),
+        caption=as.character(imgs$caption[i] %||% ""),
+        meta=read_img_meta(dest)
+      )
+      sel <- c(sel, id)
+      caps[[length(caps)+1]] <- as.character(imgs$caption[i] %||% "")
+    }
+
+  }
+
   row <- samp[1, , drop = FALSE]
 
   # Get canonical project name from DB (avoid any case/format mismatch)
@@ -8091,6 +8399,8 @@ load_sample_sqlite <- function(project_name, sid) {
     v
   }
 
+  mts_begin_transition()
+  on.exit(mts_end_transition(), add=TRUE)
   updateTextInput(session, "sample_id", value = sid)
   projs <- unique(c(list_projects(con), proj_loaded))
   updateSelectizeInput(session, "project_name", choices = projs, selected = proj_loaded, server = TRUE)
@@ -8135,9 +8445,7 @@ load_sample_sqlite <- function(project_name, sid) {
   updateSelectInput(session, "mapping_unit_confidence", selected = safe_get("mapping_unit_confidence"))
   mapping_unit_comment_rv(safe_get("mapping_unit_comment"))
 
-  mdf <- tryCatch(dbGetQuery(con, "SELECT row_order, mineral, vol_text, morphology, genesis FROM mineral_composition WHERE project_id = :pid AND sample_id = :sid ORDER BY row_order",
-                             params = list(pid = pid, sid = sid)),
-                  error = function(e) NULL)
+
   if (!is.null(mdf) && nrow(mdf) > 0) {
     minerals(data.frame(`Mineral`=mdf$mineral, `Vol. %`=mdf$vol_text, `Morphology, features`=mdf$morphology, `Genesis`=mdf$genesis,
                         check.names=FALSE, stringsAsFactors=FALSE))
@@ -8146,9 +8454,7 @@ load_sample_sqlite <- function(project_name, sid) {
                         check.names=FALSE, stringsAsFactors=FALSE))
   }
 
-  tdf <- tryCatch(dbGetQuery(con, "SELECT row_order, texture, importance, domain, interpretation FROM sample_textures WHERE project_id = :pid AND sample_id = :sid ORDER BY row_order",
-                             params = list(pid = pid, sid = sid)),
-                  error = function(e) NULL)
+
   if (!is.null(tdf) && nrow(tdf) > 0) {
     texture_components(data.frame(
       `Texture` = tdf$texture,
@@ -8162,42 +8468,17 @@ load_sample_sqlite <- function(project_name, sid) {
     texture_components(empty_texture_components_df())
   }
 
-  imgs <- tryCatch(dbGetQuery(con, "SELECT img_order, file_path, caption FROM images WHERE project_id = :pid AND sample_id = :sid ORDER BY img_order",
-                              params = list(pid = pid, sid = sid)),
-                   error = function(e) NULL)
-  clear_img_dir()
-  img_pool(list())
-  img_choices(character(0))
-  loaded_caps(list())
-  caption_store(list())
-  if (!is.null(imgs) && nrow(imgs) > 0) {
-    pool <- list(); sel <- character(0); caps <- list()
-    for (i in seq_len(nrow(imgs))) {
-      fp <- as.character(imgs$file_path[i] %||% "")
-      abs_fp <- resolve_image_path(fp)
-      if (!nzchar(fp) || is.na(abs_fp) || !file.exists(abs_fp)) next
-      nm <- basename(abs_fp)
-      dest <- file.path(img_dir, nm)
-      file.copy(abs_fp, dest, overwrite = TRUE)
-      id <- make_img_id()
-      pool[[length(pool)+1]] <- list(
-        id=id, name=nm, ext=tolower(tools::file_ext(dest)),
-        url=paste0("petro_img/", basename(dest)),
-        path=dest, is_converted=FALSE, origin="db",
-        order=as.integer(imgs$img_order[i] %||% i),
-        caption=as.character(imgs$caption[i] %||% ""),
-        meta=read_img_meta(dest)
-      )
-      sel <- c(sel, id)
-      caps[[length(caps)+1]] <- as.character(imgs$caption[i] %||% "")
-    }
-    img_pool(pool); img_choices(sel); loaded_caps(caps); caption_store(stats::setNames(caps, sel))
-  }
+
+  img_pool(pool); img_choices(sel); loaded_caps(caps); caption_store(stats::setNames(caps, sel))
   refresh_genesis_choices(selected = input$m_gen %||% "")
   refresh_morphology_choices(
     mineral_name = input$m_mineral %||% "",
     selected = input$m_morph %||% ""
   )
+  updateSelectizeInput(session, "m_mineral", selected="", server=FALSE)
+  updateTextInput(session, "m_vol", value="")
+  updateTextAreaInput(session, "m_morph", value="")
+  updateTextAreaInput(session, "m_gen", value="")
   showNotification("Loaded from SQLite.", type = "message")
   last_sample_snapshot(snapshot_current_form())
 }
@@ -8638,6 +8919,401 @@ output$download_docx_database_tools <- downloadHandler(
       session$sendCustomMessage("set_doc_title", list(title = title))
     }, once = TRUE)
   }, ignoreInit = FALSE)
+
+  # V63: complete recovery state, including editors not yet added to their tables.
+  # Shared form handlers may call this in LAN mode, where recovery is disabled.
+  mts_save_now <- function(force = FALSE) invisible(NULL)
+  if (!READ_ONLY_MODE) {
+  mts_capture_state <- function() {
+    raw <- utils::modifyList(mts_restored_raw, mts_filter_inputs(reactiveValuesToList(input)), keep.null = TRUE)
+    live <- mts_live()
+    # Native Shiny events keep committed values authoritative; overlay only values
+    # still equal to the server value observed when the browser snapshot arrived.
+    if (length(live$raw) && identical(live$epoch, mts_epoch)) {
+      same_identity <- all(vapply(c("project_name","sample_id"), function(id)
+        identical(as.character(raw[[id]] %||% ""), as.character(live$base[[id]] %||% "")), logical(1)))
+      if (same_identity) for (id in names(live$raw)) {
+        if (identical(raw[[id]], live$base[[id]])) raw[id] <- live$raw[id]
+      }
+    }
+    caps <- caption_store()
+    pool <- img_pool()
+    for (item in pool) {
+      id <- item$id
+      cap <- raw[[paste0("cap_", id)]]
+      if (!is.null(cap)) caps[[id]] <- as.character(cap)
+    }
+    list(raw = raw, minerals = minerals(), textures = texture_components(),
+      mapping_comment = mapping_unit_comment_rv(), pool = pool,
+      selected = img_choices(), captions = caps,
+      mineral_selection = input$mineral_table_rows_selected,
+      texture_selection = input$texture_components_table_rows_selected)
+  }
+  mts_has_content <- function(s) {
+    text_ids <- setdiff(MTS_FORM_IDS, c("author", "project_name", "mapping_classifier", "max_sel_images", "tc_importance", "m_mineral", "grain_size", "texture", "suggested_mapping_unit_id", "mapping_unit_confidence"))
+    any(vapply(s$raw[intersect(names(s$raw), text_ids)], function(x) any(nzchar(trimws(as.character(x)))), logical(1))) ||
+      nrow(s$minerals) > 0L || nrow(s$textures) > 0L || length(s$pool) > 0L
+  }
+  mts_state_id <- function(s) paste0(mts_session_id, "_", digest::digest(
+    list(s$raw$project_name %||% "", s$raw$sample_id %||% ""), algo = "xxhash64"))
+  mts_persist <- function(s) {
+    mts_counter <<- mts_counter + 1L
+    mts_write_revision(mts_root, mts_state_id(s), s, mts_counter, mts_image_cache, keep_versions=isolate(mts_prefs()$versions))
+  }
+  mts_save_now <- function(force = FALSE) {
+    if (!force && !isTRUE(isolate(mts_prefs()$enabled))) return(invisible(NULL))
+    if (!isTRUE(isolate(mts_ready())) || isTRUE(isolate(mts_restoring())) || isTRUE(isolate(mts_transition()))) return(invisible(NULL))
+    s <- isolate(mts_capture_state())
+    if (!mts_has_content(s)) return(invisible(NULL))
+    if (!force && identical(s, mts_last_state)) return(invisible(NULL))
+    result <- tryCatch(mts_persist(s), error = function(e) {
+      mts_status(paste("LOCAL DRAFT FAILED:", conditionMessage(e)))
+      mts_report_error(e)
+      NULL
+    })
+    if (!is.null(result)) {
+      mts_last_state <<- s
+      mts_status(paste0("Local draft saved: ", format(as.POSIXct(result$time, origin = "1970-01-01"), "%H:%M:%S"),
+        " · Project: ", if (nzchar(s$raw$project_name %||% "")) s$raw$project_name else "not selected",
+        " · Sample: ", if (nzchar(s$raw$sample_id %||% "")) s$raw$sample_id else "not assigned", " · SQLite has not been autosaved."))
+      session$sendCustomMessage("mts_draft_written", list(id = result$id, project=s$raw$project_name %||% "", sample=s$raw$sample_id %||% ""))
+    }
+    invisible(result)
+  }
+  output$mts_local_draft_status <- renderText(mts_status())
+  mts_changes <- reactive({
+    req(mts_ready(), !mts_restoring(), !mts_transition())
+    mts_capture_state()
+  })
+  mts_changes_delayed <- debounce(mts_changes, millis = function() mts_prefs()$pause_ms)
+  observeEvent(mts_changes_delayed(), { mts_save_now() }, ignoreInit = FALSE)
+  observe({
+    invalidateLater(mts_prefs()$interval_ms, session)
+    if (isTRUE(mts_ready()) && !isTRUE(mts_restoring())) mts_save_now()
+  })
+  observeEvent(input$mts_client_ready, { mts_ready(TRUE) }, ignoreInit = TRUE)
+  observeEvent(input$mts_heartbeat, {
+    session$sendCustomMessage("mts_heartbeat_ack", list(time = as.numeric(Sys.time())))
+  }, ignoreInit = TRUE)
+  observeEvent(input$mts_live_snapshot, {
+    msg <- mts_decode(input$mts_live_snapshot)
+    if (!is.list(msg) || !identical(as.integer(msg$epoch), mts_epoch)) return()
+    raw <- mts_filter_inputs(msg$raw)
+    mts_live(list(raw=raw, base=mts_filter_inputs(reactiveValuesToList(input)), epoch=mts_epoch))
+    if (isTRUE(msg$settled)) {
+      was_restore <- isTRUE(mts_restoring())
+      mts_transition(FALSE); mts_restoring(FALSE)
+      mts_save_now(force=was_restore)
+      if (!was_restore && !isTRUE(mts_prefs()$enabled)) mts_status("Automatic local saving is OFF. Save draft now remains available.")
+    } else if (isTRUE(msg$manual)) mts_save_now(force=TRUE)
+  }, ignoreInit=TRUE, priority=100)
+  observeEvent(input$mts_save_draft, { mts_save_now(force = TRUE) }, ignoreInit = TRUE)
+  observeEvent(input$mts_browser_records, {
+    incoming <- mts_decode(input$mts_browser_records)
+    if (!is.list(incoming)) return()
+    clean <- list()
+    for (r in incoming) {
+      if (!is.list(r) || !is.character(r$id) || length(r$id) != 1L ||
+          !grepl("^[a-zA-Z0-9_-]+$", r$id)) next
+      tm <- suppressWarnings(as.numeric(r$time))
+      if (length(tm) != 1L || !is.finite(tm)) next
+      clean[[r$id]] <- list(id = r$id, time = tm, raw = mts_filter_inputs(r$raw), disk_id=r$disk_id)
+    }
+    mts_browser(clean)
+    if (isTRUE(mts_restore_requested)) { mts_restore_requested <<- FALSE; mts_show_restore() }
+  }, ignoreInit = TRUE)
+  observeEvent(input$mts_restore_draft, {
+    mts_save_now(force = TRUE)
+    mts_restore_requested <<- TRUE
+    session$sendCustomMessage("mts_request_browser_records", list())
+  }, ignoreInit=TRUE)
+  mts_show_restore <- function() {
+    candidates <- mts_read_drafts(mts_root)
+    browser <- mts_browser()
+    for (id in names(browser)) {
+      b <- browser[[id]]
+      if (!length(b$raw)) next
+      target <- b$disk_id %||% id
+      d <- candidates[[target]]
+      same <- !is.null(d) && all(vapply(c("project_name","sample_id"), function(k) identical(as.character(b$raw[[k]] %||% ""), as.character(d$state$raw[[k]] %||% "")), logical(1)))
+      if (same) id <- target else if (!is.null(candidates[[id]])) id <- paste0(id, "_browser")
+      if (is.null(candidates[[id]])) {
+        candidates[[id]] <- list(id = id, time = b$time, browser_only = TRUE,
+          state = list(raw = b$raw, minerals = NULL, textures = NULL, pool = list(),
+            selected = character(0), captions = list(), mapping_comment = ""))
+      } else if (b$time >= candidates[[id]]$time) {
+        for (nm in names(b$raw)) candidates[[id]]$state$raw[nm] <- list(b$raw[[nm]])
+        candidates[[id]]$time <- b$time
+      }
+    }
+    if (!length(candidates)) {
+      showNotification("No recovery draft found yet.", type = "message")
+      return()
+    }
+    candidates <- candidates[order(vapply(candidates, function(x) x$time, numeric(1)), decreasing = TRUE)]
+    mts_candidates(candidates)
+    labels <- vapply(candidates, function(x) paste(
+      format(as.POSIXct(x$time, origin = "1970-01-01"), "%Y-%m-%d %H:%M:%S"),
+      x$state$raw$project_name %||% "", x$state$raw$sample_id %||% "unnamed sample",
+      if (isTRUE(x$browser_only)) "[browser text only]" else paste0("[", nrow(x$state$minerals), " minerals; ", length(x$state$pool), " images]"),
+      sep = " · "), character(1))
+    showModal(modalDialog(title = "Restore a local draft",
+      tags$p("Select a recovery copy. This replaces the current form; it does not write to SQLite."),
+      selectInput("mts_draft_choice", "Draft", choices = stats::setNames(names(candidates), labels)),
+      tags$small(paste("Local folder:", mts_root)),
+      footer = tagList(modalButton("Cancel"), actionButton("mts_restore_confirm", "Restore selected draft")),
+      size = "l", easyClose = TRUE))
+  }
+  observeEvent(input$mts_restore_confirm, {
+    entry <- mts_candidates()[[input$mts_draft_choice %||% ""]]
+    req(!is.null(entry))
+    s <- entry$state
+    raw <- mts_filter_inputs(s$raw)
+    # Prepare every image before changing any current form/table state.
+    restored_pool <- s$pool %||% list()
+    for (i in seq_along(restored_pool)) {
+      item <- restored_pool[[i]]
+      if (!file.exists(item$path)) stop("Draft image is missing: ", item$name)
+      dest <- tempfile(paste0("restore_", i, "_"), img_dir, paste0(".", tools::file_ext(item$path)))
+      if (!file.copy(item$path, dest)) stop("Cannot restore draft image: ", item$name)
+      restored_pool[[i]]$path <- dest
+      restored_pool[[i]]$url <- paste0(paste0(mts_image_resource, "/"), basename(dest))
+      ord <- raw[[paste0("ord_", item$id)]]
+      if (!is.null(ord)) restored_pool[[i]]$order <- as.numeric(ord)
+    }
+    mts_begin_transition()
+    mts_restoring(TRUE)
+    restore_handed_off <- FALSE
+    on.exit(if (!restore_handed_off) mts_restoring(FALSE), add = TRUE)
+    mts_status("Restoring draft to the form...")
+    mts_restored_raw <<- raw
+    removeModal()
+    if (!is.null(s$minerals)) minerals(s$minerals) else minerals(minerals()[0, , drop=FALSE])
+    if (!is.null(s$textures)) texture_components(s$textures) else texture_components(empty_texture_components_df())
+    if (length(s$mineral_selection)) DT::selectRows(mineral_table_proxy, s$mineral_selection)
+    mapping_unit_comment_rv(s$mapping_comment %||% "")
+    { # Browser-only recovery clears unrelated tables/images; it cannot restore them.
+      caps <- s$captions %||% list()
+      for (item in restored_pool) {
+        cap <- raw[[paste0("cap_", item$id)]]
+        if (!is.null(cap)) caps[[item$id]] <- as.character(cap)
+      }
+      selected <- s$selected %||% character(0)
+      for (item in restored_pool) {
+        checked <- raw[[paste0("chk_", item$id)]]
+        if (!is.null(checked)) {
+          selected <- setdiff(selected, item$id)
+          if (isTRUE(checked)) selected <- c(selected, item$id)
+        }
+      }
+      img_pool(restored_pool); img_choices(selected); caption_store(caps); loaded_caps(list())
+    }
+    for (id in intersect(names(raw), c("sample_id", "author", "field_rock_name", "lat", "lon", "rock_name", "m_vol")))
+      updateTextInput(session, id, value = raw[[id]])
+    for (id in intersect(names(raw), c("field_desc", "rock_desc", "m_morph", "m_gen")))
+      updateTextAreaInput(session, id, value = raw[[id]])
+    # Apply after server updates; choices are inserted locally without requiring SQLite.
+    session$onFlushed(function() {
+      session$sendCustomMessage("mts_restore_inputs", list(raw = raw, epoch=mts_epoch))
+    }, once = TRUE)
+    restore_handed_off <- TRUE
+    showNotification("Draft restored to the form. Review it, then use Save sample to SQLite. Pending mineral/texture editor text is also retained.",
+      type = "message", duration = 10)
+  }, ignoreInit = TRUE)
+  # Restoration completes only after the browser confirms a stable full snapshot.
+  session$onFlushed(function() {
+    session$sendCustomMessage("mts_config", list(
+      fields = MTS_FORM_IDS, prefix = paste0("MakeThinSection.v63.", basename(mts_root), "."),
+      id = mts_session_id, browser=isolate(mts_prefs()$browser)))
+  }, once = TRUE)
+
+  mts_open_preferences <- function() {
+    mts_refresh_usage()
+    mts_preference_note("Saved autosave settings loaded.")
+    showModal(modalDialog(title="Autosave and recovery",
+      mts_preferences_ui(isolate(mts_prefs())),
+      tags$p(class="small-note", "Use Save autosave settings to apply changes. Closing this window discards changes that have not been saved."),
+      footer=modalButton("Close"), size="l", easyClose=FALSE))
+  }
+  observeEvent(input$mts_preferences_open, { mts_open_preferences() }, ignoreInit=TRUE)
+  observeEvent(input$mts_cleanup_back, {
+    mts_cleanup_plan(NULL)
+    mts_open_preferences()
+  }, ignoreInit=TRUE)
+  mts_form_preferences <- function() list(
+    enabled = isTRUE(input$mts_pref_enabled), browser = isTRUE(input$mts_pref_browser),
+    pause_ms = as.integer(input$mts_pref_pause), interval_ms = as.integer(input$mts_pref_interval),
+    versions = as.integer(input$mts_pref_versions), retention_days = as.integer(input$mts_pref_days),
+    automatic_cleanup = isTRUE(input$mts_pref_auto_clean), remove_images = isTRUE(input$mts_pref_clean_images),
+    warning_mb = as.integer(input$mts_pref_warning))
+  mts_show_preferences <- function(p) {
+    updateCheckboxInput(session, "mts_pref_enabled", value=p$enabled)
+    updateCheckboxInput(session, "mts_pref_browser", value=p$browser)
+    updateCheckboxInput(session, "mts_pref_auto_clean", value=p$automatic_cleanup)
+    updateCheckboxInput(session, "mts_pref_clean_images", value=p$remove_images)
+    updateSelectInput(session, "mts_pref_pause", selected=p$pause_ms)
+    updateSelectInput(session, "mts_pref_interval", selected=p$interval_ms)
+    updateSelectInput(session, "mts_pref_versions", selected=p$versions)
+    updateSelectInput(session, "mts_pref_days", selected=p$retention_days)
+    updateSelectInput(session, "mts_pref_warning", selected=p$warning_mb)
+  }
+  mts_refresh_usage <- function() {
+    u <- mts_storage_usage(mts_root)
+    mts_usage(u)
+    p <- isolate(mts_prefs())
+    over <- p$warning_mb > 0 && u$mb >= p$warning_mb
+    if (over && !mts_warning_active) showNotification(
+      sprintf("Local draft storage is %.1f MB. Review Autosave and recovery in Settings.",u$mb),
+      type="warning",duration=NULL,id="mts_storage_warning")
+    if (!over && mts_warning_active) removeNotification("mts_storage_warning")
+    mts_warning_active <<- over
+    session$sendCustomMessage("mts_request_browser_records", list())
+  }
+  output$mts_preferences_status <- renderText({
+    form <- tryCatch(mts_validate_preferences(mts_form_preferences()), error=function(e) NULL)
+    if (!identical(form, mts_prefs())) return("Autosave settings have unsaved changes. Use Save autosave settings.")
+    paste(mts_preference_note(), if (mts_prefs()$enabled) "Automatic local saving is ON." else "Automatic local saving is OFF.")
+  })
+  output$mts_storage_status <- renderText({
+    u <- mts_usage()
+    p <- mts_prefs()
+    text <- sprintf("Local storage: %.1f MB · %d draft records · %d image copies. Browser text backups: %d records.",
+      u$mb, u$records, u$images, length(mts_browser()))
+    if (p$warning_mb > 0 && u$mb >= p$warning_mb) text <- paste("STORAGE WARNING:", text, "Review cleanup settings; nothing is deleted because of size alone.")
+    paste(text, mts_cleanup_note())
+  })
+  observeEvent(input$mts_preferences_save, {
+    p <- mts_validate_preferences(mts_form_preferences())
+    mts_write_preferences(mts_root, p)
+    mts_prefs(p)
+    mts_preference_note(paste("Saved locally at", format(Sys.time(), "%H:%M:%S")))
+    session$sendCustomMessage("mts_preferences", list(browser=p$browser))
+    if (!p$enabled) mts_status("Automatic local saving is OFF. Save draft now remains available.")
+    else mts_save_now(force=TRUE)
+    mts_refresh_usage()
+    showNotification("Autosave settings saved locally and applied to this session. Other open sessions use their existing settings until reloaded.", type="message", duration=6)
+  }, ignoreInit=TRUE)
+  observeEvent(input$mts_preferences_reset, {
+    mts_show_preferences(mts_defaults())
+    mts_preference_note("Recommended values loaded; save to apply.")
+  }, ignoreInit=TRUE)
+  observeEvent(input$mts_usage_refresh, { mts_refresh_usage() }, ignoreInit=TRUE)
+  observeEvent(input$mts_open_folder, {
+    host <- isolate(session$clientData$url_hostname %||% "")
+    if (.Platform$OS.type != "windows" || !(host %in% c("127.0.0.1", "localhost", "::1"))) {
+      showNotification("Copy the displayed path and open it on the computer running R.", type="message")
+      return()
+    }
+    mts_prepare_dir(mts_root)
+    shell.exec(normalizePath(mts_root, winslash="\\", mustWork=TRUE))
+  }, ignoreInit=TRUE)
+  mts_browser_expired <- function(days) {
+    if (days <= 0) return(character(0))
+    active <- unique(c(mts_session_id, mts_active_sessions(mts_root)))
+    cutoff <- as.numeric(Sys.time()) - days*86400
+    records <- mts_browser()
+    names(records)[vapply(records, function(r) r$time < cutoff && !any(vapply(active,
+      function(a) identical(r$id,a) || startsWith(r$id,paste0(a,"_")), logical(1))), logical(1))]
+  }
+  mts_run_cleanup <- function(p, disk_ids=NULL, image_paths=NULL, browser_ids=NULL) {
+    removed <- mts_clean_records(mts_root, p$retention_days, ids=disk_ids, protect=mts_session_id)
+    images <- if (p$remove_images) mts_unused_images(mts_root) else character(0)
+    if (!is.null(image_paths)) images <- intersect(images, image_paths)
+    image_n <- 0L
+    for (path in images) {
+      # Recheck age and ownership immediately before removal; recent writers touch reused assets.
+      if (file.exists(path) && mts_child_path(path,mts_root) &&
+          as.numeric(difftime(Sys.time(),file.info(path)$mtime,units="hours")) >= 24 && isTRUE(file.remove(path))) image_n <- image_n+1L
+    }
+    session$sendCustomMessage("mts_cleanup_browser", list(days=p$retention_days, ids=browser_ids,
+      protect=unique(c(mts_session_id,mts_active_sessions(mts_root)))))
+    if (length(removed)) mts_browser(isolate(mts_browser())[setdiff(names(isolate(mts_browser())),removed)])
+    mts_cleanup_note(sprintf("Last cleanup %s: %d local draft records and %d image copies removed.", format(Sys.time(),"%H:%M:%S"),length(removed),image_n))
+    mts_refresh_usage()
+    invisible(list(records=removed, images=image_n))
+  }
+  observeEvent(input$mts_cleanup_preview, {
+    # Get a fresh browser inventory before constructing the confirmation list.
+    session$sendCustomMessage("mts_cleanup_preview_request", list())
+  }, ignoreInit=TRUE)
+  observeEvent(input$mts_cleanup_browser_inventory, {
+    p <- mts_prefs()
+    disk <- mts_expired_records(mts_root,p$retention_days,protect=mts_session_id)
+    images <- if (p$remove_images) mts_unused_images(mts_root,exclude_records=names(disk)) else character(0)
+    # Only accept timestamps and IDs; no paths are ever taken from browser data.
+    inventory <- mts_decode(input$mts_cleanup_browser_inventory)
+    active <- unique(c(mts_session_id,mts_active_sessions(mts_root)))
+    cutoff <- as.numeric(Sys.time()) - p$retention_days*86400
+    browser_ids <- character(0)
+    for (r in inventory) {
+      if (!is.list(r) || !is.character(r$id) || length(r$id)!=1L || !grepl("^session_[a-zA-Z0-9_]+$",r$id)) next
+      tm <- suppressWarnings(as.numeric(r$time))
+      if (length(tm)!=1L || !is.finite(tm)) next
+      if (p$retention_days > 0 && tm < cutoff && !any(vapply(active,function(a)
+        identical(a,r$id) || startsWith(r$id,paste0(a,"_")),logical(1)))) browser_ids <- c(browser_ids,r$id)
+    }
+    mts_cleanup_plan(list(preferences=p, disk=names(disk), images=images, browser=browser_ids))
+    labels <- vapply(utils::head(disk,10),function(x) paste(x$project,x$sample,sep=" / "),character(1))
+    showModal(modalDialog(title="Preview old-draft cleanup",
+      tags$p(sprintf("Eligible: %d local draft records, %d unused image copies, %d browser text backups.",length(disk),length(images),length(browser_ids))),
+      if (length(labels)) tags$ul(lapply(labels,tags$li)),
+      tags$p("Deletion is permanent and may include descriptions never saved to SQLite. The working SQLite database and its image folder are not cleanup targets."),
+      tags$p("Recent images, active sessions, and drafts with unreadable revisions are retained. Only the listed candidates are considered; changed records are checked again."),
+      footer=tagList(actionButton("mts_cleanup_back", "Back to autosave settings"), if (length(disk)+length(images)+length(browser_ids)>0)
+        actionButton("mts_cleanup_confirm","Delete listed old drafts",class="btn-danger")), size="l",easyClose=TRUE))
+  }, ignoreInit=TRUE)
+  observeEvent(input$mts_cleanup_confirm, {
+    plan <- mts_cleanup_plan(); req(!is.null(plan))
+    mts_cleanup_plan(NULL); removeModal()
+    mts_run_cleanup(plan$preferences,plan$disk,plan$images,plan$browser)
+    mts_open_preferences()
+  }, ignoreInit=TRUE)
+  observe({
+    invalidateLater(60000,session)
+    mts_guard(mts_touch_session(mts_root,mts_session_id))
+    if (isTRUE(mts_ready())) {
+      p <- mts_prefs()
+      now <- as.numeric(Sys.time())
+      if (now-mts_last_maintenance >= 1800) {
+        mts_last_maintenance <<- now
+        if (p$automatic_cleanup) mts_run_cleanup(p)
+        else mts_refresh_usage()
+      }
+    }
+  })
+  session$onFlushed(function() {
+    mts_refresh_usage()
+  }, once=TRUE)
+  } # Recovery handlers, timers and storage access exist only in edit mode.
+
+
+  # Search always opens SQLite read-only; loading uses the existing guarded form loader.
+  mts_database_search_server("rock_search",
+    connect=function() db_connect(read_only=TRUE),
+    load_sample=function(project,sample) {
+      load_sample_sqlite(project,sample)
+      updateTabsetPanel(session,"main_tabs",selected="Sample metadata")
+    })
+  mts_rock_diagrams_server("rock_diagrams",read_only=READ_ONLY_MODE,
+    add_image=function(result,export) {
+      if(READ_ONLY_MODE) stop("Image container changes are disabled in LAN read-only mode.")
+      out_path <- tempfile(paste0("RockDiagram_",result$type,"_"),tmpdir=img_dir,fileext=".png")
+      export(out_path)
+      meta <- read_img_meta(out_path)
+      pool <- img_pool()
+      next_order <- if(!length(pool)) 1 else max(vapply(pool,function(x) as.numeric(x$order %||% 0),numeric(1)))+1
+      id <- make_img_id()
+      pool[[length(pool)+1L]] <- list(id=id,name=basename(out_path),ext="png",
+        url=paste0(mts_image_resource,"/",basename(out_path)),path=out_path,
+        is_converted=FALSE,origin="rock_diagram_export",order=next_order,meta=meta)
+      img_pool(pool)
+      caps <- caption_store(); caps[[id]] <- paste(result$definition$title,result$label,result$field,sep=" | "); caption_store(caps)
+      max_n <- suppressWarnings(as.integer(input$max_sel_images %||% 10))
+      if(is.na(max_n) || max_n<1) max_n <- 10
+      img_choices(tail(c(img_choices(),id),max_n))
+      updateTabsetPanel(session,"main_tabs",selected="Image container (sorted)")
+      showNotification("Rock classification diagram added to Image container.",type="message")
+    })
 
 }
 shinyApp(ui, server)

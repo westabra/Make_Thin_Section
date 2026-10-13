@@ -77,7 +77,7 @@ library(openxlsx)
 # SQLite database path used only when this file is run directly with Rscript.
 db_path <- Sys.getenv(
   "PETRO_DB_PATH",
-  unset = "C:/GCDkit.data/petro_db/petro_v3.sqlite"
+  unset = "Make_Thin_Section_demo.sqlite"
 )
 
 # Mineral abbreviations CSV.
