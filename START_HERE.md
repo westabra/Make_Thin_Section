@@ -12,7 +12,7 @@ weights are not included. RStudio is optional.
    to download missing R packages and their required dependencies from CRAN.
    Leave the console open until it reports SUCCESS. Existing loadable packages are reused.
 3. Double-click **3_Start_Demo.cmd**. A browser opens the educational demo.
-4. To use your database, edit **MTS_DATABASE** in **config.R**, then run
+4. Run **5_Configure_paths.cmd**, choose your database, and click **Check and save database**. Then run
    **2_Start_Make_Thin_Section.cmd**. Until changed, this also opens the demo.
    Keep the database's associated images folder beside the database.
 
@@ -47,10 +47,22 @@ MTS_PORT overrides the selected mode's port. MTS_BROWSER=FALSE suppresses automa
 If R cannot be found, create **R_PATH.txt** with one line containing the full path to
 Rscript.exe, without quotation marks, for example C:/Program Files/R/R-4.5.3/bin/Rscript.exe.
 
+## Choosing paths without R syntax (V70.1)
+
+Run **5_Configure_paths.cmd** after installing dependencies. A local settings page opens in your browser. Use **Choose database...** to select an existing SQLite file and **Choose folder...** to select your Image Fragmentator installation. The Windows selection dialog opens on the computer running the program. Alternatively, paste an ordinary Windows path, for example `C:\GeoData\My rocks.sqlite` or `C:\GeoApps\Image_Fragmentator_7.7.0_Lite`. Quotes added by Windows **Copy as path** are accepted. Do not add R assignments or double the backslashes.
+
+Click the corresponding **Check and save** button. Database validation opens the existing SQLite file read-only and checks for the samples table; it does not create or edit the database. Fragmentator validation checks its required files. It does not install dependencies or run segmentation.
+
+You can also use **Database tools > Choose database...** and **Configure Fragmentator > Choose folder...** inside local editing mode. A saved database choice takes effect after restarting Make Thin Section; existing sessions stay connected to their current database. Path settings cannot be changed through LAN read-only mode or a remote browser session.
+
+Paths are saved as plain text in **database_path.txt** and **fragmentator_path.txt** beside the launch files. They are private computer settings, not part of the public release. Keep your database's images folder beside the database. The demo launcher always uses the educational demo. Advanced overrides remain supported: **PETRO_DB_PATH > database_path.txt > MTS_DATABASE in config.R**, and **MTS_FRAGMENTATOR_ROOT > fragmentator_path.txt**. Editing config.R manually still requires valid R syntax; ordinary setup no longer requires editing it.
+
+For an existing V70 Lite installation, close the program and extract the **V70.1 path-settings update ZIP** directly into its folder, allowing the listed program files to be replaced. The update contains no database, images, config.R or saved paths, so your LAN address and existing configuration remain in place. A restart is required.
+
 ## Optional Image Fragmentator
 
 Make Thin Section works without it. To connect an existing **7.7.0 Portable** installation,
-open Image container (sorted), click **Configure Fragmentator**, enter its root folder and
+open Image container (sorted), click **Configure Fragmentator**, choose its root folder or paste a Windows path and
 save. The path is stored in fragmentator_path.txt and survives a restart. Install its own
 dependencies using its own setup instructions; the Make Thin Section installer does not do so.
 MTS_FRAGMENTATOR_ROOT can override the saved path. No Fragmentator release URL is assumed.
@@ -59,7 +71,7 @@ Make Thin Section. On a remote LAN client, run Fragmentator on that client separ
 
 ## Updating from an existing V70
 
-Extract this release into a new folder. Copy your database setting into config.R; keep the
+Extract this release into a new folder. Run 5_Configure_paths.cmd to select your existing database; keep the
 actual working database and images at their existing location. Do not replace a working
 database with the educational demo. R packages already available to this R installation
 are reused; private libraries belonging to an older portable bundle are not automatically copied.

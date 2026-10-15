@@ -4,6 +4,7 @@ exports/
 fragmentator_output/
 Image_Fragmentator_Portable/
 fragmentator_path.txt
+database_path.txt
 R_PATH.txt
 .Rhistory
 .RData
