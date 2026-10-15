@@ -1,3 +1,4 @@
+local({
 # Create the public demo SQLite database for Make_Thin_Section.
 #
 # The demo contains two projects:
@@ -24,7 +25,9 @@ if (length(missing) > 0) {
        ". Install them before creating the demo database.")
 }
 
-script_file <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
+source_paths <- vapply(sys.frames(), function(x) if(is.null(x$ofile)) "" else as.character(x$ofile[[1]]), character(1))
+source_paths <- source_paths[nzchar(source_paths)]
+script_file <- if(length(source_paths)) tail(source_paths,1) else NULL
 if (is.null(script_file) || !nzchar(script_file)) {
   args <- commandArgs(trailingOnly = FALSE)
   file_arg <- args[grepl("^--file=", args)]
@@ -65,11 +68,11 @@ safe_dir <- function(path) {
   normalizePath(path, winslash = "/", mustWork = FALSE)
 }
 
-if (dir.exists(project_dir)) unlink(project_dir, recursive = TRUE, force = TRUE)
-if (dir.exists(lengai_project_dir)) unlink(lengai_project_dir, recursive = TRUE, force = TRUE)
+if (dir.exists(project_dir) || dir.exists(lengai_project_dir) || file.exists(db_path)) stop("Demo already exists. This generator will not overwrite existing data.")
+
 invisible(safe_dir(project_dir))
 invisible(safe_dir(lengai_project_dir))
-if (file.exists(db_path)) invisible(file.remove(db_path))
+
 
 con <- DBI::dbConnect(RSQLite::SQLite(), db_path)
 on.exit(DBI::dbDisconnect(con), add = TRUE)
@@ -637,3 +640,4 @@ cat("Demo SQLite database created:\n", normalizePath(db_path, winslash = "/", mu
 cat("Demo projects:\n", project_name, "\n", lengai_project_name, "\n", sep = "")
 cat("Source attribution:\n", source_url, "\n", lengai_source_ref, "\n", sep = "")
 cat("Demo images folder:\n", normalizePath(images_root, winslash = "/", mustWork = TRUE), "\n", sep = "")
+})

@@ -1,3 +1,86 @@
+# Make Thin Section v70 Lite
+
+This release contains the complete Make Thin Section application, reference tables,
+Word template and educational demo. R packages, Image Fragmentator, Python and model
+weights are not included. RStudio is optional.
+
+## First start on Windows
+
+1. Install **64-bit R 4.5 or later** from https://cran.r-project.org/bin/windows/base/.
+   R 4.5.3 was used for release checks. Extract the ZIP to a writable folder.
+2. Double-click **1_Check_and_install_dependencies.cmd**. Internet access is needed
+   to download missing R packages and their required dependencies from CRAN.
+   Leave the console open until it reports SUCCESS. Existing loadable packages are reused.
+3. Double-click **3_Start_Demo.cmd**. A browser opens the educational demo.
+4. Run **5_Configure_paths.cmd**, choose your database, and click **Check and save database**. Then run
+   **2_Start_Make_Thin_Section.cmd**. Until changed, this also opens the demo.
+   Keep the database's associated images folder beside the database.
+
+Packages are installed in a user-owned MakeThinSection library outside the release
+folder, separated by R major/minor version. Setup prints the exact location. You can
+override it with MTS_R_LIBRARY. The ZIP stays small, but downloaded dependencies still
+occupy disk space. Do not run the installer as administrator.
+
+The installer uses CRAN's available Windows binaries; it does not freeze all transitive
+dependencies. R_REQUIREMENTS.csv records the tested direct-package versions and licenses.
+Installed versions are reported in logs/installed_R_packages.csv. Check the demo if versions differ.
+If setup fails, review the console and logs/dependency-install.log, fix the connection or
+R installation, and rerun setup. It does not reinstall packages that already load.
+
+## Launch modes
+
+| File | Purpose |
+|---|---|
+| 2_Start_Make_Thin_Section.cmd | Local editing, http://127.0.0.1:3081 |
+| 3_Start_Demo.cmd | Educational demo, same local port |
+| 4_Start_LAN_readonly.cmd | Read-only viewing, port 3080; no automatic browser |
+| run_local_edit.R | Same editing mode when sourced in R/RStudio |
+| run_LAN_readonly.R | Same viewing mode when sourced in R/RStudio |
+
+Each CMD launcher starts Rscript directly. Keep its console open; Ctrl+C stops the app.
+For LAN viewing set MTS_LAN_HOST in config.R to your server's actual LAN IP, then open
+http://YOUR_SERVER_IP:3080 from the other computer. The release defaults to localhost.
+Readonly mode disables SQLite editing and autosave/recovery. It is not an authentication system.
+For trusted LAN use, allow the required connection in the server's firewall if necessary.
+MTS_PORT overrides the selected mode's port. MTS_BROWSER=FALSE suppresses automatic browsing.
+
+If R cannot be found, create **R_PATH.txt** with one line containing the full path to
+Rscript.exe, without quotation marks, for example C:/Program Files/R/R-4.5.3/bin/Rscript.exe.
+
+## Choosing paths without R syntax (V70.1)
+
+Run **5_Configure_paths.cmd** after installing dependencies. A local settings page opens in your browser. Use **Choose database...** to select an existing SQLite file and **Choose folder...** to select your Image Fragmentator installation. The Windows selection dialog opens on the computer running the program. Alternatively, paste an ordinary Windows path, for example `C:\GeoData\My rocks.sqlite` or `C:\GeoApps\Image_Fragmentator_7.7.0_Lite`. Quotes added by Windows **Copy as path** are accepted. Do not add R assignments or double the backslashes.
+
+Click the corresponding **Check and save** button. Database validation opens the existing SQLite file read-only and checks for the samples table; it does not create or edit the database. Fragmentator validation checks its required files. It does not install dependencies or run segmentation.
+
+You can also use **Database tools > Choose database...** and **Configure Fragmentator > Choose folder...** inside local editing mode. A saved database choice takes effect after restarting Make Thin Section; existing sessions stay connected to their current database. Path settings cannot be changed through LAN read-only mode or a remote browser session.
+
+Paths are saved as plain text in **database_path.txt** and **fragmentator_path.txt** beside the launch files. They are private computer settings, not part of the public release. Keep your database's images folder beside the database. The demo launcher always uses the educational demo. Advanced overrides remain supported: **PETRO_DB_PATH > database_path.txt > MTS_DATABASE in config.R**, and **MTS_FRAGMENTATOR_ROOT > fragmentator_path.txt**. Editing config.R manually still requires valid R syntax; ordinary setup no longer requires editing it.
+
+For an existing V70 Lite installation, close the program and extract the **V70.1 path-settings update ZIP** directly into its folder, allowing the listed program files to be replaced. The update contains no database, images, config.R or saved paths, so your LAN address and existing configuration remain in place. A restart is required.
+
+## Optional Image Fragmentator
+
+Make Thin Section works without it. To connect an existing **7.7.0 Portable** installation,
+open Image container (sorted), click **Configure Fragmentator**, choose its root folder or paste a Windows path and
+save. The path is stored in fragmentator_path.txt and survives a restart. Install its own
+dependencies using its own setup instructions; the Make Thin Section installer does not do so.
+MTS_FRAGMENTATOR_ROOT can override the saved path. No Fragmentator release URL is assumed.
+Launch and stop it using the adjacent buttons. Export results before stopping it or closing
+Make Thin Section. On a remote LAN client, run Fragmentator on that client separately.
+
+## Updating from an existing V70
+
+Extract this release into a new folder. Run 5_Configure_paths.cmd to select your existing database; keep the
+actual working database and images at their existing location. Do not replace a working
+database with the educational demo. R packages already available to this R installation
+are reused; private libraries belonging to an older portable bundle are not automatically copied.
+Database-specific recovery drafts remain available when the database path stays the same.
+
+See README.md for the full user guide and RELEASE_NOTES.md for changes.
+
+---
+
 # Make_Thin_Section
 
 Make_Thin_Section is a local Shiny application for maintaining a structured database of petrographic thin-section descriptions.
@@ -6,8 +89,42 @@ The application provides a practical interface for building and using a petrogra
 
 Author: Sergei Abramov  
 Contact: westabra@gmail.com  
-Current public app file: `app_Make_Thin_Section_version_62_mineral_reference_web_search.R`  
+Current app file: `app_Make_Thin_Section_v70.R` (v70 Lite, updated 2026-10-13)  
 Version 62 DOI: [10.13140/RG.2.2.18311.97448](https://doi.org/10.13140/RG.2.2.18311.97448)
+
+## Version 66: Work recovery and autosave
+
+Start the updated version with `source("run_local_edit.R")`. Keep the v70 app, launcher, README.md and support files in the same application folder. Earlier launchers still start their earlier app versions. For LAN viewing use `run_LAN_readonly.R`; its host address and port must match the serving computer.
+
+### Open Work recovery
+
+The light-green **Work recovery (Click to open)** control is below **New Sample**, **Reset Form** and **Clone previous sample** in the left panel. Click it to expand or collapse the connection status, browser text-backup status, local draft status, **Save draft now** and **Restore draft**. It starts collapsed. Automatic saving continues while it is collapsed. Available drafts no longer trigger a persistent notification; open **Restore draft** when you need to inspect them.
+
+### Restore unfinished work
+
+1. After an interruption, restart the app in local edit mode and open the browser page. Use the same database path to find its local drafts; browser text backups also require the same browser profile and origin (address and port).
+2. Expand **Work recovery** and click **Restore draft**. The app attempts to preserve the current form as a draft before showing available recovery copies.
+3. Choose by date/time, project and sample ID. Local drafts include mineral/texture tables, images and captions, plus pending editor text. Entries marked **browser text only** do not include tables or images; restoring these clears unrelated tables and images from the current form.
+4. Click **Restore selected draft**. Restoration replaces the current form, without writing to SQLite. Review all restored fields, tables and images, and add any pending mineral/texture editor entries to their tables as appropriate.
+5. Use **Save sample to SQLite** to save the reviewed description to the database.
+
+**Save draft now** makes a local recovery copy even when automatic local saving is off. Drafts are recovery aids: the most recent changes may be missing after a crash or interrupted connection. A saved draft is not a saved SQLite sample.
+
+### Autosave and recovery settings
+
+At the bottom of **Settings**, click **Autosave and recovery...**. Its separate window controls local autosave, browser text backup, saving intervals, retained revisions per sample/session, retention and cleanup, and the storage-size warning. It also displays the local draft folder and storage usage.
+
+Click **Save autosave settings** to apply and persist changes. **Close** discards unsaved setting changes when the window is next opened. Saved preferences apply to this session; reload other open sessions to use them. Defaults enable local autosave and browser backup, save after a 1.5-second pause and check every 10 seconds, and retain three revisions per sample/session. Age-based deletion and automatic cleanup are off by default.
+
+Drafts and preferences are stored separately from SQLite, in a database-specific folder under `%LOCALAPPDATA%/MakeThinSection/drafts` on Windows, or under `MTS_DRAFT_DIR` when configured. Keep the database path unchanged to reuse the same recovery folder.
+
+Before manual cleanup, inspect the preview and confirm only if those old drafts are no longer needed. Cleanup can permanently remove descriptions never saved to SQLite. Recent image copies, active sessions and unreadable draft revisions are protected. The size warning alone does not delete files; automatic cleanup requires its own setting. **Back to autosave settings** returns from the cleanup preview.
+
+### LAN read-only mode
+
+With `SHINY_READ_ONLY=TRUE` (the LAN read-only launcher), **Work recovery** and **Autosave and recovery...** are hidden and unavailable. The server does not register recovery handlers, read local drafts/preferences, save browser or local drafts, or run draft cleanup. Recovery settings and drafts therefore cannot be viewed or edited from that session. Existing drafts remain available for a later local edit session.
+
+**About Program** in Settings identifies V70 Lite. Recovery behavior introduced in v66 is retained.
 
 ## Why Use Make_Thin_Section?
 
@@ -36,7 +153,7 @@ The goal is simple: keep the petrographic description, mineral table, texture in
 - Exports project point layers as KML, Shapefile ZIP, or GeoPackage.
 - Exports clean static project maps as PNG or PDF.
 - Exports a project petrographic-summary workbook from Database tools.
-- Includes a separate Image Fragmentator tool for petrographic image segmentation experiments.
+- Can launch an optional external Image Fragmentator 7.7.0 Portable installation; it is not included in Lite.
 
 ## Intended Users
 
@@ -62,173 +179,9 @@ It is not an automatic mineral-identification system. Mineral names, textures, i
 
 The left panel is the central sample form. The tabs on the right provide supporting work areas: mineral table, database loading tools, QAPF, reference lookup, map/GIS export, settings, the built-in user guide, and image management.
 
-## Repository Files
+## Installation and data storage
 
-Keep these files in the same folder unless you also update paths in the R code:
-
-- `app_Make_Thin_Section_version_62_mineral_reference_web_search.R` - main public Shiny application.
-- `mineral_reference_web_resources.csv` - editable curated catalogue used by the Mineral Reference resource hub.
-- `run_demo.R` - demo launcher. This is the file most new users should run first.
-- `install_main_dependencies.R` - installs missing packages required by the main application and its export tools.
-- `install_fragmentator_dependencies.R` - installs missing packages required by Image Fragmentator, including `EBImage`.
-- `create_demo_sqlite.R` - developer / maintenance script for rebuilding the demo database and demo images.
-- `Make_Thin_Section_demo.sqlite` - small two-project demonstration database stored next to the app.
-- `images/` - image library folder used by the demo database and by local SQLite databases stored in this app folder.
-- `image_fragmentator_V6.R` - standalone image-segmentation helper app.
-- `petro_template.docx` - Word template used for DOCX export.
-- `minerals.csv` - selectable mineral names and petrographic reference terms used by the composition editor and local Mineral Reference lookup. The distributed file contains names only.
-- `biblio_for_mineral_descriptions.csv` - sourced reference descriptions classified as `general`, `general PPL`, or `general XPL`. It may also contain clearly identified microtextures and alteration mixtures that are not independent mineral species.
-- `grainsizes.csv` - grain-size vocabulary.
-- `textures.csv` - texture vocabulary and interpretation support.
-- `lookup_rocktype.csv` - lithology / mapping-unit classifier source.
-- `rock_name_list.csv` - optional supporting rock-name vocabulary; version 62 does not load it automatically.
-- `White et. al. Abbreviations for names of rock-forming minerals.csv` - abbreviation source required by the petrographic-summary exporter and reproduced on its `mineral_abbreviations` sheet.
-- `export_petrographic_summary_from_SQLite_v2_3.R` - standalone/reference copy of the project-summary exporter. Version 62 contains the operational exporter in the main application file and does not source this external script at runtime.
-
-## Requirements
-
-Install a recent version of R. Open R or RStudio in the application folder and
-run the supplied dependency installer once:
-
-```r
-source("install_main_dependencies.R")
-```
-
-The installer downloads only packages that are missing. It installs the core
-application packages:
-
-```text
-shiny, DT, officer, flextable, magick, base64enc,
-sf, leaflet, DBI, RSQLite, dplyr, stringr, readr, openxlsx, tibble, markdown
-```
-
-It also installs packages used by advanced map and Shapefile export:
-
-```text
-htmlwidgets, webshot2, zip
-```
-
-Image Fragmentator has a separate installer because its Bioconductor dependency
-is not required for normal use of the main application:
-
-```r
-source("install_fragmentator_dependencies.R")
-```
-
-This installs `shiny`, `magick`, `png`, `BiocManager`, and `EBImage`. Packages
-that are already installed are not downloaded again.
-
-The main app checks Fragmentator dependencies before launching it. If something
-is missing, it shows an installation dialog instead of starting a broken
-Fragmentator session.
-
-On Windows, the `sf` and `magick` packages may require system libraries depending on the R distribution. Installing recent CRAN binaries is usually the simplest route.
-
-## How To Run
-
-Open R or RStudio in the application folder and run:
-
-```r
-shiny::runApp("app_Make_Thin_Section_version_62_mineral_reference_web_search.R")
-```
-
-Run this command from the application folder. The distribution does not
-currently use the standard filename `app.R`, so call the versioned application
-file explicitly. The app expects its CSV files and `petro_template.docx` to be
-available from the working directory.
-
-## How To Run The Demo
-
-The repository includes a small demo SQLite database next to the app:
-
-```text
-Make_Thin_Section_demo.sqlite
-```
-
-It contains two demo projects:
-
-- `Isle_of_Skye_demo` - six educational records based on the pre-Palaeogene geology of the Isle of Skye, Scotland.
-- `Oldoinyo_Lengai_demo` - six educational records based on xenolith and natrocarbonatite examples from Oldoinyo Lengai, Tanzania.
-
-The demo database includes sample records, mineral tables, texture components, coordinates, lithological assignments, and selected synthetic images. It is designed to show how the app handles switching between independent petrographic projects.
-
-The Skye project uses the BGS Earthwise page below as geological background:
-
-[Pre-Palaeogene rocks of the Isle of Skye](https://earthwise.bgs.ac.uk/index.php/Pre-Palaeogene_rocks_of_the_Isle_of_Skye)
-
-The Oldoinyo Lengai project uses the following thesis as geological background:
-
-Carmody, L. (2012). *Geochemical characteristics of carbonatite-related volcanism and sub-volcanic metasomatism at Oldoinyo Lengai, Tanzania*. PhD thesis, University College London.
-
-The demo petrographic descriptions are rewritten educational examples. They are not copied field descriptions or measured thin-section descriptions from the sources.
-
-For a normal first-time demo, run only:
-
-```r
-source("run_demo.R")
-```
-
-`run_demo.R` sets `PETRO_DB_PATH` to `Make_Thin_Section_demo.sqlite` and starts the Shiny app.
-
-Do not run `create_demo_sqlite.R` for normal demo use. That script deletes and rebuilds the demo SQLite database and demo images. Use it only if the demo database has been removed, corrupted, or intentionally changed.
-
-If you need to rebuild the demo from scratch, use this order:
-
-```r
-source("create_demo_sqlite.R")
-source("run_demo.R")
-```
-
-or:
-
-```r
-Sys.setenv(PETRO_DB_PATH = file.path(getwd(), "Make_Thin_Section_demo.sqlite"))
-shiny::runApp("app_Make_Thin_Section_version_62_mineral_reference_web_search.R")
-```
-
-## Data Storage
-
-By default, the application stores data in:
-
-```text
-C:/GCDkit.data/petro_db/petro_v3.sqlite
-```
-
-The application-managed image library and working export directory are located beside that database:
-
-```text
-C:/GCDkit.data/petro_db/images/
-C:/GCDkit.data/petro_db/exports/
-```
-
-Browser downloads are not automatically written into these folders. DOCX reports,
-project petrographic-summary XLSX workbooks, and other download-handler results are
-delivered through the browser, which controls the final save location. In particular,
-the petrographic-summary exporter does not need write access to the SQLite directory.
-
-On first use, the app creates the SQLite database schema and the required folders if they do not already exist.
-
-To use another database location without editing the app code, set the `PETRO_DB_PATH` environment variable before launching:
-
-```r
-Sys.setenv(PETRO_DB_PATH = "C:/path/to/your/petro_demo.sqlite")
-shiny::runApp("app_Make_Thin_Section_version_62_mineral_reference_web_search.R")
-```
-
-If `PETRO_DB_PATH` is not set, the app uses the default path shown above.
-
-The included `Make_Thin_Section_demo.sqlite` is an example of this approach: it is stored next to the Shiny script and can be launched through `run_demo.R`.
-
-## Read-Only Mode
-
-The app supports a read-only LAN mode through the environment variable `SHINY_READ_ONLY`.
-
-```r
-Sys.setenv(SHINY_READ_ONLY = "TRUE")
-shiny::runApp("app_Make_Thin_Section_version_62_mineral_reference_web_search.R")
-```
-
-In read-only mode, the app opens the existing SQLite database without allowing write operations such as saving samples, creating projects, deleting records, or importing classifier rows. Project petrographic-summary reports remain available: the database is opened with a physical SQLite read-only connection and the generated workbook is delivered through the browser without writing beside the database.
+Follow START_HERE.md for installation, launch modes and optional external Fragmentator configuration. The demo is educational; point config.R to your own existing SQLite database for production work. Keep its images folder alongside it and back up both database and images.
 
 ## Main Interface Areas
 
@@ -280,7 +233,7 @@ Whitney, D. L., & Evans, B. W. (2010). *Abbreviations for names of rock-forming
 minerals*. *American Mineralogist*, *95*(1), 185-187.
 
 The summary exporter used by version 62 is embedded in
-`app_Make_Thin_Section_version_62_mineral_reference_web_search.R`. The external
+`app_Make_Thin_Section_v70.R`. The external
 `export_petrographic_summary_from_SQLite_v2_3.R` file is not required at runtime.
 
 #### Single Sample Word Report
@@ -367,19 +320,19 @@ Fragmentator exports PNG figures and CSV statistics manually. It does not automa
 
 This project has been developed and tested primarily in one petrographic workflow. External users may need to adjust:
 
-- `DB_PATH`;
+- `MTS_DATABASE` in `config.R`;
 - local controlled-vocabulary CSV files;
 - the DOCX template;
 - map export settings;
-- package installation for `sf`, `magick`, `webshot2`, and `EBImage`.
+- package installation for `sf`, `magick` and `webshot2` (Fragmentator dependencies are separate).
 
 Possible additions for future releases include a citation file
 (`CITATION.cff`), example screenshots, example DOCX and GIS exports, and a
-launcher script for non-demo local work.
+additional export examples.
 
 ## Current Limitations
 
-- The default database path is configured in the R script, but it can be overridden with `PETRO_DB_PATH`.
+- Select the database with 5_Configure_paths.cmd or Database tools > Choose database. PETRO_DB_PATH overrides database_path.txt, which overrides the legacy config.R fallback.
 - The first screen is powerful but dense; new users should follow the workflow section above.
 - Some features assume Windows-style paths and local desktop use.
 - Advanced basemap export depends on web rendering, installed screenshot tools, and internet availability for map tiles.
@@ -415,3 +368,44 @@ under `GPL (>= 2)`. The GCDkit project is available at
 Janousek, V.; Farrow, C. M.; Erban, V. (2006). Interpretation of whole-rock geochemical data in igneous geochemistry: introducing Geochemical Data Toolkit (GCDkit). Journal of Petrology 47(6): 1255-1259. doi: 10.1093/petrology/egl013.
 
 For the full notice, see `THIRD_PARTY_NOTICES.md`.
+
+## Rock-description search and additional modal diagrams
+
+### Database tools: Search rock descriptions
+
+On **Database tools**, project creation/deletion and sample loading/deletion appear first. Open the green **Search rock descriptions (Click to open)** panel below these controls to use search; it starts collapsed.
+
+Choose **One project**, **Selected projects**, or **Entire database**. For a selected-project search, choose one or more project names. Use **Refresh project list** after adding projects elsewhere.
+
+Enter a word or phrase in any of these fields:
+
+- **4) Rock name (microscope identification)** searches the saved microscope rock name.
+- **2a) Field Rock Name (field identification)** searches the saved field rock name.
+- **Suggested lithological unit** searches the name of the linked lithological unit.
+- **Mineral composition** searches mineral names, volume text, morphology and genesis across all mineral rows for each sample.
+
+Matching is case-insensitive, including Unicode text. Each box is a literal substring: a phrase is searched as entered, and characters such as `%`, `_`, `*` and quotes are not wildcards. Empty fields are ignored. **Match all (AND)** requires every filled field to match; **Match any (OR)** requires at least one. Click **Search** after changing filters. Searches use saved database records, not unsaved form edits or recovery drafts.
+
+Results contain one row per project/sample pair. Select a row to preview its descriptions. **Open selected sample** asks before replacing the current form. **Export results (CSV)** exports the complete result of the last search, including descriptions, regardless of the visible table page. Text that could be interpreted as a spreadsheet formula is prefixed with an apostrophe in the export.
+
+Searching, previewing and downloading results are available in LAN read-only mode. Search connections never write to SQLite and do not modify its schema.
+
+### Rock classification
+
+The **Rock classification** tab adds five manual, single-sample ternary tools alongside the existing QAPF tab:
+
+1. Amphibolite modal field: Remaining constituents / Plagioclase / Amphibole.
+2. Olivine / Orthopyroxene / Clinopyroxene.
+3. Olivine / Pyroxene / Hornblende.
+4. Plagioclase / Pyroxene / Olivine.
+5. Plagioclase / Pyroxene / Hornblende.
+
+Choose a diagram, enter non-negative modal values and an optional sample label, then click **Plot sample**. The three components are normalized to 100%; a zero total is rejected. For amphibolite, include every remaining mineral in **Remaining constituents**. The axes for the igneous diagrams represent only the named components. Pyroxene means orthopyroxene plus clinopyroxene.
+
+The display identifies the diagram field. On a shared boundary, adjacent fields are listed. The amphibolite result describes modal-field membership; it does not determine metamorphic texture or amphibole identity. For the igneous diagrams, first establish whether the whole rock belongs to the relevant mafic or ultramafic classification. Plagioclase-pyroxene diagrams alone do not distinguish gabbro, gabbronorite and norite, or gabbro from diorite.
+
+Use **Download PNG** or **Download PDF** to save the plotted result. **Add diagram to Image container** adds an image and caption to the current editable sample so it can be included in a Word report. In LAN read-only mode, plotting and downloading remain available; adding to the image container is blocked. These tools do not automatically replace the rock name or write to SQLite. Downloads reflect the last **Plot sample** action.
+
+The diagrams follow the numerical geometry of BGS Figures 13 and 16. In the olivine diagrams, the 5% minor-component boundaries continue straight across Ol=40%. The basal end triangles use 90% of the dominant basal component and reach Ol=10%; the central olivine-free band ends at Ol=5%. Only the split between the two mixed pyroxene/hornblende fields uses Px=Hbl. The Plagioclase-Pyroxene-Hornblende base has four fields: plagioclase-bearing pyroxenite, hornblende pyroxenite, pyroxene hornblendite, and hornblendite. Dashed external guides label the broad BGS groups and the leuco-, meso-, and mela- bands (Pl=90-65%, 65-35%, and 35-10%). These group guides do not replace the solid field boundaries. The amphibolite modal region uses amphibole >=30%, plagioclase >=5%, and their combined abundance >=75%.
+
+References: [BGS Rock Classification Scheme, Volume 1, Figs. 13 and 16](https://nora.nerc.ac.uk/id/eprint/3223/1/RR99006.pdf); [SCMR IGC2004 report](https://www2.bgs.ac.uk/scmr/docs/IGC2004.pdf); [IODP Expedition 399 methods](https://publications.iodp.org/proceedings/399/EXP_REPT/CHAPTERS/399_102.PDF). The four igneous diagrams were rechecked against the supplied BGS original images on 2026-10-12. Field numbers are local legend references, not official BGS identifiers.

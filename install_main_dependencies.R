@@ -1,96 +1,30 @@
-# Install R packages required by Make Thin Section.
-#
-# Run this file once before the first launch:
-#   source("install_main_dependencies.R")
-#
-# Packages that are already installed are not downloaded again.
-
-cran_repo <- getOption("repos")[["CRAN"]]
-if (is.null(cran_repo) ||
-    length(cran_repo) == 0 ||
-    is.na(cran_repo) ||
-    !nzchar(cran_repo) ||
-    identical(cran_repo, "@CRAN@")) {
-  cran_repo <- "https://cloud.r-project.org"
-}
-
-options(repos = c(CRAN = cran_repo))
-
-core_packages <- c(
-  "shiny",
-  "DT",
-  "officer",
-  "flextable",
-  "magick",
-  "base64enc",
-  "sf",
-  "leaflet",
-  "DBI",
-  "RSQLite",
-  "dplyr",
-  "stringr",
-  "readr",
-  "openxlsx",
-  "tibble",
-  "markdown"
-)
-
-advanced_export_packages <- c(
-  "htmlwidgets",
-  "webshot2",
-  "zip"
-)
-
-required_packages <- unique(c(core_packages, advanced_export_packages))
-
-is_installed <- function(package) {
-  requireNamespace(package, quietly = TRUE)
-}
-
-missing_packages <- required_packages[
-  !vapply(required_packages, is_installed, logical(1))
-]
-
-cat("\nMake Thin Section dependency installer\n")
-cat("CRAN repository:", getOption("repos")[["CRAN"]], "\n\n")
-
-if (length(missing_packages) > 0) {
-  cat(
-    "Installing missing packages:\n  ",
-    paste(missing_packages, collapse = ", "),
-    "\n\n",
-    sep = ""
-  )
-
-  install.packages(missing_packages)
-} else {
-  cat("All required packages are already installed.\n")
-}
-
-still_missing <- required_packages[
-  !vapply(required_packages, is_installed, logical(1))
-]
-
-if (length(still_missing) > 0) {
-  stop(
-    "\nSome packages could not be installed:\n  ",
-    paste(still_missing, collapse = ", "),
-    "\n\nReview the installation messages above. On Windows, use a recent ",
-    "version of R so CRAN binary packages are available."
-  )
-}
-
-installed_versions <- vapply(
-  required_packages,
-  function(package) as.character(utils::packageVersion(package)),
-  character(1)
-)
-
-cat("\nInstallation check completed successfully.\n")
-cat("Installed package versions:\n")
-for (package in names(installed_versions)) {
-  cat(sprintf("  %-14s %s\n", package, installed_versions[[package]]))
-}
-
-cat("\nYou can now start the demonstration with:\n")
-cat('  source("run_demo.R")\n\n')
+local({
+  paths <- vapply(sys.frames(),function(x) if(is.null(x$ofile)) "" else as.character(x$ofile[[1]]),character(1))
+  paths <- paths[nzchar(paths)]
+  args <- grep("^--file=",commandArgs(FALSE),value=TRUE)
+  script <- if(length(paths)) tail(paths,1) else if(length(args)) sub("^--file=","",args[1]) else "install_main_dependencies.R"
+  root <- dirname(normalizePath(script,winslash="/",mustWork=TRUE))
+  source(file.path(root,"scripts/runtime.R"),local=TRUE)
+  if(getRversion()<"4.5.0" || .Machine$sizeof.pointer!=8) stop("Install 64-bit R 4.5 or later first. RStudio is optional.")
+  lib <- mts_use_library(create=TRUE)
+  options(timeout=max(600,getOption("timeout",60)))
+  dir.create(file.path(root,"logs"),showWarnings=FALSE)
+  report <- file.path(root,"logs","dependency-install.log")
+  connection <- file(report,open="wt"); sink(connection,split=TRUE)
+  on.exit({sink(); close(connection)},add=TRUE)
+  cat("Make Thin Section v70 Lite dependency setup\nR:",R.version.string,"\nLibrary:",lib,"\n")
+  missing <- mts_missing_packages(root)
+  if(length(missing)) {
+    cat("Installing missing/unloadable packages:",paste(missing,collapse=", "),"\n")
+    # Only required dependencies, not the much larger set of suggested packages.
+    utils::install.packages(missing,lib=lib,repos="https://cloud.r-project.org",
+      dependencies=NA,type=if(.Platform$OS.type=="windows") "binary" else "source")
+  } else cat("All required packages are already available; nothing downloaded.\n")
+  mts_check_packages(root)
+  req <- utils::read.csv(file.path(root,"R_REQUIREMENTS.csv"),stringsAsFactors=FALSE)
+  req$InstalledVersion <- vapply(req$Package,function(p) as.character(utils::packageVersion(p)),character(1))
+  utils::write.csv(req,file.path(root,"logs","installed_R_packages.csv"),row.names=FALSE)
+  print(req[,c("Package","TestedVersion","InstalledVersion")],row.names=FALSE)
+  if(any(req$TestedVersion!=req$InstalledVersion)) cat("Some versions differ from the release test environment. Run the demo before using a working database.\n")
+  cat("\nSUCCESS: all required namespaces load. Start 3_Start_Demo.cmd.\nNo Python or Image Fragmentator dependencies were installed.\n")
+})
