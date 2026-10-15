@@ -1,7 +1,7 @@
-name: Prepare V70 Lite draft release
+name: Prepare V70.1 path settings release
 on:
   push:
-    branches: [codex/release-v70-lite]
+    branches: [codex/v70-1-path-settings]
     paths-ignore: ['.github/release-result.txt']
   workflow_dispatch:
 permissions:

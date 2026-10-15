@@ -2539,7 +2539,8 @@ tags$hr(),
 
         tabPanel(
           "Database tools",
-          h4("SQLite database (fixed path)"),
+          h4("SQLite database"),
+          if (!READ_ONLY_MODE) actionButton("configure_database_btn", "Choose database..."),
           tags$p(class="small-note", paste0("DB: ", DB_PATH)),
           tags$div(style="display:flex; gap:10px; flex-wrap:wrap;",
           actionButton("create_project_btn", "Create project", class="btn btn-success"),
@@ -3346,7 +3347,7 @@ server <- function(input, output, session) {
     showModal(modalDialog(
       title = "About Make Thin Section",
       tags$p("Petrographic description, image management, SQLite storage and DOCX/GIS reporting application."),
-      tags$p(tags$b("Application version: "), "66 — Autosave settings in a separate window"),
+      tags$p(tags$b("Application version: "), "70.1 Lite — Windows path selection and connection settings"),
       tags$p(
         class = "small-note",
         if (READ_ONLY_MODE) "Database settings are shared through SQLite. Autosave and recovery are unavailable in LAN read-only mode."
@@ -3357,17 +3358,43 @@ server <- function(input, output, session) {
     ))
   }, ignoreInit = TRUE)
 
+  observeEvent(input$configure_database_btn, {
+    if (READ_ONLY_MODE || !(isolate(session$clientData$url_hostname %||% "") %in% c("", "localhost", "127.0.0.1", "::1"))) return()
+    showModal(modalDialog(title="Database connection",
+      tags$p("Choose an existing database or paste a Windows path. Quotes from Copy as path are accepted; no R syntax is needed."),
+      textInput("database_folder_setting", "SQLite file", value=DB_PATH),
+      actionButton("browse_database_setting", "Browse files..."),
+      tags$p("The selected database will be used after restarting Make Thin Section. The current session stays connected to its current database. PETRO_DB_PATH overrides this setting if present."),
+      footer=tagList(modalButton("Cancel"), actionButton("save_database_setting", "Check and save"))))
+  }, ignoreInit=TRUE)
+  observeEvent(input$browse_database_setting, {
+    if (READ_ONLY_MODE || !(isolate(session$clientData$url_hostname %||% "") %in% c("", "localhost", "127.0.0.1", "::1"))) return()
+    tryCatch({ p <- mts_browse_database(); if (!is.null(p)) updateTextInput(session,"database_folder_setting",value=p) },
+      error=function(e) showNotification(conditionMessage(e),type="error"))
+  }, ignoreInit=TRUE)
+  observeEvent(input$save_database_setting, {
+    if (READ_ONLY_MODE || !(isolate(session$clientData$url_hostname %||% "") %in% c("", "localhost", "127.0.0.1", "::1"))) return()
+    tryCatch({ p <- mts_validate_database(input$database_folder_setting); mts_save_path(p,"database_path.txt"); removeModal();
+      showNotification("Database verified. Path saved for the next launch; restart Make Thin Section to switch databases.",duration=NULL) },
+      error=function(e) showNotification(conditionMessage(e),type="error"))
+  }, ignoreInit=TRUE)
   observeEvent(input$configure_fragmentator_btn, {
     if (READ_ONLY_MODE || !(isolate(session$clientData$url_hostname %||% "") %in% c("", "localhost", "127.0.0.1", "::1"))) return()
     showModal(modalDialog(title="Optional Image Fragmentator",
-      tags$p("Not included in V70 Lite. Enter the folder of an existing 7.7.0 Portable installation. Install its dependencies separately."),
+      tags$p("Select the folder of an installed Image Fragmentator 7.7.0 Lite or Portable. You can paste an ordinary Windows path, including quotes from Copy as path. Install its dependencies separately."),
       textInput("fragmentator_folder", "Installation folder", value=mts_fragmentator_root()),
+      actionButton("browse_fragmentator_folder", "Choose folder..."),
       footer=tagList(modalButton("Cancel"), actionButton("save_fragmentator_folder", "Save path"))))
+  }, ignoreInit=TRUE)
+  observeEvent(input$browse_fragmentator_folder, {
+    if (READ_ONLY_MODE || !(isolate(session$clientData$url_hostname %||% "") %in% c("", "localhost", "127.0.0.1", "::1"))) return()
+    tryCatch({ p <- mts_browse_fragmentator(); if (!is.null(p)) updateTextInput(session,"fragmentator_folder",value=p) },
+      error=function(e) showNotification(conditionMessage(e),type="error"))
   }, ignoreInit=TRUE)
   observeEvent(input$save_fragmentator_folder, {
     if (READ_ONLY_MODE || !(isolate(session$clientData$url_hostname %||% "") %in% c("", "localhost", "127.0.0.1", "::1"))) return()
     tryCatch({ path <- mts_validate_fragmentator(input$fragmentator_folder);
-      writeLines(enc2utf8(path), "fragmentator_path.txt", useBytes=TRUE); removeModal();
+      mts_save_path(path, "fragmentator_path.txt"); removeModal();
       showNotification("Fragmentator path saved. MTS_FRAGMENTATOR_ROOT overrides this setting if present.")
     }, error=function(e) showNotification(conditionMessage(e), type="error"))
   }, ignoreInit=TRUE)

@@ -1,6 +1,6 @@
-# Paths may be absolute (use forward slashes) or relative to this folder.
-# The public release defaults to its educational demo. Set your own database here.
-# PETRO_DB_PATH, when set, overrides MTS_DATABASE.
+# Use 5_Configure_paths.cmd to choose a database without editing R code.
+# Priority: PETRO_DB_PATH > database_path.txt > MTS_DATABASE below.
+# This legacy fallback is R code; use forward slashes if editing it manually.
 MTS_DATABASE <- "Make_Thin_Section_demo.sqlite"
 MTS_LOCAL_PORT <- 3081L
 # For LAN access, replace this with the serving computer's actual LAN IPv4 address.

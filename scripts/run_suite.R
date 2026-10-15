@@ -5,9 +5,10 @@ mts_run_suite <- function(root,mode="local") {
   source(file.path(root,"scripts/runtime.R"),local=TRUE)
   mts_check_packages(root)
   source(file.path(root,"config.R"),local=TRUE,encoding="UTF-8")
-  db <- if(mode=="demo") file.path(root,"Make_Thin_Section_demo.sqlite") else Sys.getenv("PETRO_DB_PATH",unset=MTS_DATABASE)
-  if(!file.exists(db)) stop("Database not found: ",db,". Set MTS_DATABASE in config.R, or start 3_Start_Demo.cmd.")
-  db <- normalizePath(db,winslash="/",mustWork=TRUE)
+  source(file.path(root,"scripts/path_settings.R"),local=TRUE,encoding="UTF-8")
+  db <- mts_database_path(root,MTS_DATABASE,mode)
+  db <- tryCatch(mts_validate_database(db), error=function(e)
+    stop(conditionMessage(e), " Run 5_Configure_paths.cmd to select your database, or start 3_Start_Demo.cmd.",call.=FALSE))
   host <- if(mode=="lan") MTS_LAN_HOST else "127.0.0.1"
   port <- suppressWarnings(as.integer(Sys.getenv("MTS_PORT",unset=as.character(if(mode=="lan") MTS_LAN_PORT else MTS_LOCAL_PORT))))
   if(length(port)!=1 || is.na(port) || port<1 || port>65535) stop("Invalid TCP port in config.R or MTS_PORT.")

@@ -1,13 +1,14 @@
 
+source(file.path(getwd(), "scripts", "path_settings.R"), local=TRUE, encoding="UTF-8")
 mts_fragmentator_root <- function() {
   env <- Sys.getenv("MTS_FRAGMENTATOR_ROOT")
-  if(nzchar(env)) return(env)
-  if(file.exists("fragmentator_path.txt")) return(trimws(readLines("fragmentator_path.txt",n=1,warn=FALSE,encoding="UTF-8")))
+  if(nzchar(env)) return(mts_clean_path(env))
+  if(file.exists("fragmentator_path.txt")) return(mts_saved_path("fragmentator_path.txt"))
   ""
 }
 mts_validate_fragmentator <- function(root) {
   if(length(root)!=1 || is.na(root) || !nzchar(trimws(root))) stop("Image Fragmentator is not included. Use Configure Fragmentator to select an existing 7.7.0 Portable installation.")
-  root <- normalizePath(trimws(root),winslash="/",mustWork=TRUE)
+  root <- normalizePath(mts_clean_path(root),winslash="/",mustWork=TRUE)
   required <- c("portable_tools/launch.R", "runtime/python/python.exe", "weights/FastSAM-x.pt", "app/image_fragmentator_V7_7_0_grainsight.R", "app/grainsight_support.R")
   missing <- required[!file.exists(file.path(root,required))]
   if(length(missing)) stop("Incomplete Fragmentator installation: ",paste(missing,collapse=", "))
